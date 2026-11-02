@@ -1,3 +1,13 @@
+omp-web (0.5.16) jammy; urgency=medium
+
+  * Chat attachments: accept PDF uploads and store them in a per-session
+    temp folder (os tmpdir/omp-web-pdf-uploads/<sessionId>, 0700) instead of
+    rejecting them as binary. The agent reads the PDF on demand with its
+    `read` tool, and the FileViewer preview plus session-scoped authorization
+    keep working after a restart (closes #87).
+
+ -- JoySort Release Bot <release@joysort.cc>  Mon, 02 Nov 2026 03:02:55 +0000
+
 omp-web (0.5.15) jammy; urgency=medium
 
   * Restore the user's prompt (text + images) and keep its draft whenever
