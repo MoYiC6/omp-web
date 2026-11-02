@@ -140,12 +140,98 @@ test("failed sends restore the submission into the composer and surface the serv
   assert.match(restoreSource, /addNotice\(\{ type: "error", message: e instanceof Error \? e\.message : String\(e\) \}\)/);
   assert.match(restoreSource, /restoreSubmission\?\.\(/);
 
-  // A definitively rejected prompt restores into the session's draft key.
-  assert.match(sendSource, /restoreFailedSubmission\(\s*"Failed to send message:",[\s\S]*?session\?\.id \?\? sentSessionId \?\? undefined,/);
+  // A definitively rejected prompt restores into the draft the text was taken
+  // from (ChatInput hands its key to the send callbacks). For a first send that
+  // is still the provisional `new:<cwd>` key — the freshly created session id
+  // only becomes the composer's key after promotion, so it is never the target (#88).
+  assert.match(sendSource, /const handleSend = useCallback\(async \(message: string, images\?: AttachedImage\[\], draftKey\?: string\)/);
+  assert.match(sendSource, /restoreFailedSubmission\(\s*"Failed to send message:",\s*e,\s*message,\s*images,[\s\S]*?\bdraftKey,\s*\);/);
+  assert.doesNotMatch(sendSource, /sentSessionId \?\? undefined/);
+  assert.doesNotMatch(sendSource, /session\?\.id \?\? sentSessionId/);
 
   // Every queued send path funnels failures through the same restore — a
-  // failed steer/follow-up used to eat the text with only a console.error.
-  assert.match(queuedSource, /restoreFailedSubmission\("Failed to steer:", e, message, images, sid\);/);
-  assert.match(queuedSource, /restoreFailedSubmission\("Failed to queue prompt:", e, message, images, sid\);/);
-  assert.match(queuedSource, /restoreFailedSubmission\("Failed to follow up:", e, message, images, sid\);/);
+  // failed steer/follow-up used to eat the text with only a console.error —
+  // and restores into the draft it came from, not whatever session id the hook holds.
+  assert.match(queuedSource, /restoreFailedSubmission\("Failed to steer:", e, message, images, draftKey\);/);
+  assert.match(queuedSource, /restoreFailedSubmission\("Failed to queue prompt:", e, message, images, draftKey\);/);
+  assert.match(queuedSource, /restoreFailedSubmission\("Failed to follow up:", e, message, images, draftKey\);/);
+  assert.doesNotMatch(queuedSource, /images, sid\)/);
+});
+
+test("submitted drafts are settled only by a confirmed turn and kept otherwise (#88)", () => {
+  const agentSettledSource = source.slice(
+    source.indexOf('case "agent_settled"'),
+    source.indexOf('case "prompt_done"'),
+  );
+  const promptDoneSource = source.slice(
+    source.indexOf('case "prompt_done"'),
+    source.indexOf('case "prompt_error"'),
+  );
+  const promptErrorSource = source.slice(
+    source.indexOf('case "prompt_error"'),
+    source.indexOf('case "mode_change"'),
+  );
+  const finishSource = source.slice(
+    source.indexOf("const finishPromptWithoutStream"),
+    source.indexOf("const waitForPromptSettlement"),
+  );
+  const settleSource = source.slice(
+    source.indexOf("  const settleSubmittedDrafts = useCallback"),
+    source.indexOf("  const scheduleEventStreamClose = useCallback"),
+  );
+  const sendSource = source.slice(
+    source.indexOf("  const handleSend = useCallback"),
+    source.indexOf("  const executeBash = useCallback"),
+  );
+  const queuedSource = source.slice(
+    source.indexOf("  const handleSteer = useCallback"),
+    source.indexOf("  const handleAbortCompaction = useCallback"),
+  );
+
+  // The hook never touches a draft itself: a tracker from the draft store owns
+  // the (draft key, text) of every submission and confirms exactly those, so a
+  // turn that was not confirmed (ambiguous, aborted, errored) stays on record
+  // when a later turn in the same session is.
+  assert.match(source, /import \{ createSubmissionTracker \} from "@\/lib\/draft-store";/);
+  assert.match(source, /const \[submissions\] = useState\(createSubmissionTracker\);/);
+  assert.doesNotMatch(source, /clearDraft|setDraft\(|confirmDraft/);
+
+  // prompt_done / agent_settled confirm unless a prompt_error flagged the run
+  // or the user aborted it (an aborted turn may never have recorded the prompt).
+  assert.match(promptDoneSource, /settleSubmittedDrafts\(\)/);
+  assert.match(agentSettledSource, /settleSubmittedDrafts\(\)/);
+  // A prompt_done that arrives after the poll fallback settled the UI still confirms.
+  assert.match(promptDoneSource, /settleSubmittedDrafts\(\);\s*const firstNotification = notifyPromptStage\(runId\);\s*if \(!promptWasPending && !firstNotification\) break;/);
+  assert.match(settleSource, /const keepOnRecord = promptErroredRef\.current \|\| promptAbortedRef\.current;[\s\S]*?if \(keepOnRecord\) submissions\.keepOnRecord\(\);\s*else submissions\.confirm\(sessionIdRef\.current\);/);
+  assert.match(source, /if \(agentRunningRef\.current\) promptAbortedRef\.current = true;\s*await sendAgentCommand\(sid, \{ type: "abort" \}\);/);
+  assert.match(promptErrorSource, /promptErroredRef\.current = true;/);
+  // A rejected prompt goes back to the composer instead of waiting for a reload.
+  assert.match(promptErrorSource, /restoreInFlightPrompt\(\);/);
+  assert.match(settleSource, /restoreSubmission\?\.\(\s*prompt\.message,[\s\S]*?\);/);
+
+  // The poll fallback runs when SSE was lost: it settles the UI but cannot tell a
+  // finished turn from a prompt_error it missed, so it must not confirm.
+  assert.doesNotMatch(finishSource, /submissions\.confirm|settleSubmittedDrafts/);
+
+  // Tracking starts when a send is dispatched. A definitive rejection (restored
+  // into the composer) and an ambiguous transport failure (delivery unknown) both
+  // stop tracking it, so no later turn can confirm it.
+  assert.match(sendSource, /const submission = submissions\.track\(draftKey, message\);/);
+  assert.match(sendSource, /if \(!definitivelyRejected && sentSessionId\) \{\s*(?:\/\/[^\n]*\n\s*)*submissions\.untrack\(submission\);\s*void waitForPromptSettlement\(sentSessionId, promptRunId\);\s*return;\s*\}/);
+  assert.match(sendSource, /restoreFailedSubmission\(\s*"Failed to send message:"[\s\S]*?\);\s*(?:\/\/[^\n]*\n\s*)*submissions\.untrack\(submission\);/);
+  // Steer / follow-up / queued prompts are confirmed together with the run they
+  // join, and untracked when the queue rejects them.
+  assert.equal(queuedSource.match(/const submission = submissions\.track\(draftKey, message\);/g)?.length, 3);
+  assert.equal(queuedSource.match(/submissions\.untrack\(submission\);\s*restoreFailedSubmission\(/g)?.length, 3);
+
+  // A send the hook cannot start (agent or shell busy) hands the text back.
+  assert.match(sendSource, /if \(agentRunningRef\.current \|\| bashRunningRef\.current\) \{[\s\S]*?restoreFailedSubmission\([\s\S]*?draftKey,\s*\);\s*return;/);
+});
+
+test("AppShell scopes persisted drafts to the resolved web user (#88)", () => {
+  assert.match(appShellSource, /import \{ setDraftUser \} from "@\/lib\/draft-store";/);
+  assert.match(
+    appShellSource,
+    /const webUsername = webUser\?\.username \?\? null;\s*useEffect\(\(\) => \{\s*setDraftUser\(webUsername\);\s*\}, \[webUsername\]\);/,
+  );
 });

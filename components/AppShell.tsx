@@ -24,6 +24,7 @@ import { useResizablePanel } from "@/hooks/useResizablePanel";
 import { useAudio } from "@/hooks/useAudio";
 import { useWebUser } from "@/hooks/useWebUser";
 import { copyText } from "@/lib/clipboard";
+import { setDraftUser } from "@/lib/draft-store";
 import { getFileName } from "@/lib/file-paths";
 import {
   defaultTerminalFontSize,
@@ -101,6 +102,12 @@ function AppShellBody({ initialTarget, initialSession, resolutionRevision }: App
   const { user: webUser } = useWebUser();
   // Fail closed: the service-control trigger (issue #85) is admin-only.
   const isAdminUser = webUser?.role === "admin";
+  // Persisted drafts are stored per web user: scope them as soon as the
+  // identity resolves (a no-op while it is still loading or auth is off, #88).
+  const webUsername = webUser?.username ?? null;
+  useEffect(() => {
+    setDraftUser(webUsername);
+  }, [webUsername]);
   const { preference, toggleTheme } = useTheme();
   const themeLabelKey =
     preference === "light" ? "theme.light" : preference === "dark" ? "theme.dark" : "theme.auto";

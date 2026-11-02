@@ -7,12 +7,16 @@ import type { ContextUsage, SlashCommandInfo } from "@/lib/omp-types";
 import type { TextContent, UserMessage } from "@/lib/types";
 import type { TranslationParams } from "@/lib/i18n/types";
 import {
-  clearDraft,
   getDraft,
+  isProvisionalDraftKey,
+  markDraftSubmitted,
   mergeRestoredSubmissionDraft,
   mergeRestoredSubmissionText,
+  reconcileHydratedDraftText,
   rekeyDraft as rekeyStoredDraft,
+  restoreDraftSubmission,
   setDraft,
+  subscribeDraftScope,
   type ChatDraftImage,
 } from "@/lib/draft-store";
 import {
@@ -43,11 +47,16 @@ interface ModelOption {
 }
 
 interface Props {
-  onSend: (message: string, images?: AttachedImage[]) => void;
+  /**
+   * `draftKey` on the submit callbacks is the composer draft the text was taken
+   * from. That text stays a pending draft until the session confirms the turn,
+   * and a failed send is restored into exactly that draft (#88).
+   */
+  onSend: (message: string, images?: AttachedImage[], draftKey?: string) => void;
   onAbort: () => void;
-  onSteer?: (message: string, images?: AttachedImage[]) => void;
-  onFollowUp?: (message: string, images?: AttachedImage[]) => void;
-  onPromptWithStreamingBehavior?: (message: string, behavior: "steer" | "followUp", images?: AttachedImage[]) => void;
+  onSteer?: (message: string, images?: AttachedImage[], draftKey?: string) => void;
+  onFollowUp?: (message: string, images?: AttachedImage[], draftKey?: string) => void;
+  onPromptWithStreamingBehavior?: (message: string, behavior: "steer" | "followUp", images?: AttachedImage[], draftKey?: string) => void;
   isStreaming: boolean;
   model?: { provider: string; modelId: string } | null;
   isAutoModelSelection?: boolean;
@@ -538,6 +547,45 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   valueRef.current = value;
   attachedImagesRef.current = attachedImages;
 
+  /**
+   * Moves the draft stored under `previousKey` (this composer's text and images
+   * plus any submission the server has not confirmed yet) to `nextKey`, and keys
+   * the composer under it. The provisional `new:<cwd>` to session id promotion
+   * goes through here exactly once.
+   */
+  const moveComposerDraft = useCallback((previousKey: string, nextKey: string) => {
+    if (previousKey === nextKey) return;
+    if (draftKeyRef.current !== previousKey) {
+      rekeyStoredDraft(previousKey, nextKey);
+      return;
+    }
+
+    const currentDraft = {
+      value: valueRef.current,
+      images: attachedImagesRef.current.map(imageToDraftImage),
+    };
+    const moved = rekeyStoredDraft(previousKey, nextKey, currentDraft) ?? { value: "", images: [] };
+    const unchanged = moved.value === currentDraft.value
+      && moved.images.length === currentDraft.images.length
+      && moved.images.every((image, index) => (
+        image.data === currentDraft.images[index]?.data
+        && image.mimeType === currentDraft.images[index]?.mimeType
+      ));
+    draftKeyRef.current = nextKey;
+    if (unchanged) return;
+
+    const movedImages = draftImagesToAttachedImages(moved.images);
+    valueRef.current = moved.value;
+    attachedImagesRef.current = movedImages;
+    setValue(moved.value);
+    setAttachedImages((current) => {
+      current.forEach(revokeImagePreview);
+      return movedImages;
+    });
+    setAtQuery(null);
+    setHistoryMenuOpen(false);
+  }, []);
+
   useImperativeHandle(ref, () => ({
     insertIfEmpty(text: string) {
       const ta = textareaRef.current;
@@ -595,61 +643,33 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       });
     },
     rekeyDraft(previousKey: string, nextKey: string) {
-      if (previousKey === nextKey) return;
-      if (draftKeyRef.current !== previousKey) {
-        rekeyStoredDraft(previousKey, nextKey);
-        return;
-      }
-
-      const currentDraft = {
-        value: valueRef.current,
-        images: attachedImagesRef.current.map(imageToDraftImage),
-      };
-      const moved = rekeyStoredDraft(previousKey, nextKey, currentDraft) ?? { value: "", images: [] };
-      const unchanged = moved.value === currentDraft.value
-        && moved.images.length === currentDraft.images.length
-        && moved.images.every((image, index) => (
-          image.data === currentDraft.images[index]?.data
-          && image.mimeType === currentDraft.images[index]?.mimeType
-        ));
-      draftKeyRef.current = nextKey;
-      if (unchanged) return;
-
-      const movedImages = draftImagesToAttachedImages(moved.images);
-      valueRef.current = moved.value;
-      attachedImagesRef.current = movedImages;
-      setValue(moved.value);
-      setAttachedImages((current) => {
-        current.forEach(revokeImagePreview);
-        return movedImages;
-      });
-      setAtQuery(null);
-      setHistoryMenuOpen(false);
+      moveComposerDraft(previousKey, nextKey);
     },
     restoreSubmission(text: string, images?: ChatDraftImage[], targetDraftKey?: string) {
       if (!text.trim() && !images?.length) return;
 
-      // clearInput is queued before the submission handler runs. Compose with
-      // that queued state so a fast rejection cannot observe stale DOM text and
-      // then get overwritten by the clear.
+      // submitInput emptied the composer (queued state) before the submission
+      // handler ran. Compose with that queued state so a fast rejection cannot
+      // observe stale DOM text and then get overwritten by the clear.
       const currentDraftKey = draftKeyRef.current;
       const destinationDraftKey = targetDraftKey ?? currentDraftKey;
       const targetsCurrentComposer = destinationDraftKey === currentDraftKey;
-      const storedDraft = !targetsCurrentComposer && destinationDraftKey
-        ? getDraft(destinationDraftKey)
-        : null;
-      const restoredDraft = mergeRestoredSubmissionDraft(
-        text,
-        images,
-        targetsCurrentComposer ? valueRef.current : (storedDraft?.value ?? ""),
-        targetsCurrentComposer
-          ? attachedImagesRef.current.map(imageToDraftImage)
-          : (storedDraft?.images ?? []),
-      );
+      const liveDraft = {
+        value: valueRef.current,
+        images: attachedImagesRef.current.map(imageToDraftImage),
+      };
       // The first optimistic message switches ChatWindow out of its empty-state
-      // layout and remounts this component. Persist synchronously so recovery is
+      // layout and remounts this component. The store persists synchronously
+      // (and settles the pending submission this text came from) so recovery is
       // not lost if this instance is the one being unmounted.
-      if (destinationDraftKey) setDraft(destinationDraftKey, restoredDraft);
+      const restoredDraft = destinationDraftKey
+        ? restoreDraftSubmission(
+            destinationDraftKey,
+            text,
+            images,
+            targetsCurrentComposer ? liveDraft : undefined,
+          )
+        : mergeRestoredSubmissionDraft(text, images, liveDraft.value, liveDraft.images);
       if (!targetsCurrentComposer) return;
       const restoredImages = images?.length
         ? [
@@ -882,18 +902,44 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (imageAttachErrorTimerRef.current) clearTimeout(imageAttachErrorTimerRef.current);
   }, []);
 
-  const clearInput = useCallback(() => {
+  /** Empties the composer UI. Whether the stored draft is kept is the caller's decision. */
+  const resetComposer = useCallback(() => {
     valueRef.current = "";
     setValue("");
     setAtQuery(null);
     setHistoryMenuOpen(false);
-    if (draftKey) clearDraft(draftKey);
-    if (draftKeyRef.current && draftKeyRef.current !== draftKey) clearDraft(draftKeyRef.current);
     clearImages();
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [clearImages, draftKey]);
+  }, [clearImages]);
+
+  /**
+   * The text was consumed locally (shell or builtin command): nothing for the
+   * server to confirm, so the composer's draft goes. A submission still pending
+   * under the same key (an aborted or unconfirmed turn) is not this command's
+   * to drop, which is why this empties the draft instead of clearing the key.
+   */
+  const clearInput = useCallback(() => {
+    if (draftKey) setDraft(draftKey, { value: "", images: [] });
+    if (draftKeyRef.current && draftKeyRef.current !== draftKey) {
+      setDraft(draftKeyRef.current, { value: "", images: [] });
+    }
+    resetComposer();
+  }, [draftKey, resetComposer]);
+
+  /**
+   * The text is going to the server. The composer empties, but the text stays on
+   * record as a pending draft until the session confirms the turn or a failure
+   * restores it, so an error never costs the user their prompt (#88).
+   * Returns the draft key the text was taken from.
+   */
+  const submitInput = useCallback((text: string): string | undefined => {
+    const sourceKey = draftKeyRef.current ?? draftKey;
+    if (sourceKey) markDraftSubmitted(sourceKey, text);
+    resetComposer();
+    return sourceKey;
+  }, [draftKey, resetComposer]);
 
   useEffect(() => {
     if (!draftKey || draftKeyRef.current !== draftKey) return;
@@ -906,6 +952,18 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   useEffect(() => {
     const previousDraftKey = draftKeyRef.current;
     if (previousDraftKey === draftKey) return;
+
+    // A provisional `new:<cwd>` composer whose conversation just got its session
+    // id keeps the same draft: move it once (text typed while the first send was
+    // in flight and the unconfirmed submission both follow) instead of parking
+    // it under the provisional key and loading the session's empty draft.
+    if (
+      previousDraftKey && draftKey
+      && isProvisionalDraftKey(previousDraftKey) && !isProvisionalDraftKey(draftKey)
+    ) {
+      moveComposerDraft(previousDraftKey, draftKey);
+      return;
+    }
 
     if (previousDraftKey) {
       setDraft(previousDraftKey, {
@@ -927,7 +985,20 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       prev.forEach(revokeImagePreview);
       return nextImages;
     });
-  }, [draftKey]);
+  }, [draftKey, moveComposerDraft]);
+
+  // The web user, and with it the scope drafts are stored under, can resolve
+  // after this composer mounted: pick up the draft saved for it meanwhile.
+  useEffect(() => subscribeDraftScope(() => {
+    const key = draftKeyRef.current;
+    const stored = key ? getDraft(key) : null;
+    if (!stored) return;
+    const next = reconcileHydratedDraftText(stored.value, valueRef.current);
+    if (next === valueRef.current) return;
+    valueRef.current = next;
+    setValue(next);
+    setAtQuery(null);
+  }), []);
 
   useEffect(() => {
     const ta = textareaRef.current;
@@ -956,15 +1027,25 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       const result = await onBuiltinCommand(msg);
       if (result.handled) {
         if (!result.error) {
-          clearInput();
-          if (result.prompt) onSend(result.prompt);
+          if (result.prompt) {
+            // The expanded prompt is what reaches the server, so that is what stays pending.
+            onSend(result.prompt, undefined, submitInput(result.prompt));
+          } else {
+            clearInput();
+          }
         }
         return;
       }
     }
-    clearInput();
-    onSend(msg, images.length ? images : undefined);
-  }, [value, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock, waitForPendingImages]);
+    // `!command` runs as a shell command in the session instead of going to the
+    // model: consumed locally, nothing for the server to confirm.
+    if (!images.length && msg.startsWith("!")) {
+      clearInput();
+      onSend(msg);
+      return;
+    }
+    onSend(msg, images.length ? images : undefined, submitInput(msg));
+  }, [value, isStreaming, onBuiltinCommand, onSend, clearInput, submitInput, onAudioUnlock, waitForPendingImages]);
 
   const slashQuery = value.startsWith("/") && !/\s/.test(value.slice(1))
     ? value.slice(1).toLowerCase()
@@ -1205,17 +1286,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     onAudioUnlock?.();
     const streamingBehavior = mode === "steer" ? "steer" : "followUp";
     if (msg.startsWith("/") && onPromptWithStreamingBehavior) {
-      clearInput();
-      onPromptWithStreamingBehavior(msg, streamingBehavior);
+      onPromptWithStreamingBehavior(msg, streamingBehavior, undefined, submitInput(msg));
       return;
     }
-    clearInput();
-    if (mode === "steer" && onSteer) {
-      onSteer(msg);
-    } else if (mode === "followup" && onFollowUp) {
-      onFollowUp(msg);
-    }
-  }, [value, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock, waitForPendingImages]);
+    const queue = mode === "steer" ? onSteer : onFollowUp;
+    // Nothing would receive the text: leave it in the composer instead of eating it.
+    if (!queue) return;
+    queue(msg, undefined, submitInput(msg));
+  }, [value, onPromptWithStreamingBehavior, onSteer, onFollowUp, submitInput, onAudioUnlock, waitForPendingImages]);
 
   const getNextSlashIndex = useCallback((direction: "up" | "down" | "left" | "right") => {
     const lastIndex = displayedSlashCommands.length - 1;
