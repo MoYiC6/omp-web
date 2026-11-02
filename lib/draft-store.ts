@@ -16,8 +16,21 @@
  *              delete it; `confirmDraft` (turn confirmed) or
  *              `restoreDraftSubmission` (turn rejected) resolve it.
  *
+ * Each submission is tracked by the session hook under a client-generated
+ * `promptId` that the server echoes in that prompt's `prompt_done` /
+ * `prompt_error` (`createSubmissionTracker`): only its own turn confirms it and
+ * only its own failure restores it.
+ *
  * A submission that was still pending when the page died is not guessed at on
  * the next load: its text comes back into the composer as an editable draft.
+ *
+ * Known limit (deferred, #70): there is no cross-tab sync. Every tab keeps its
+ * own cache over the shared localStorage and nothing listens to `storage`
+ * events. A tab that first reads a key while another tab still has a submission
+ * pending under it cannot tell that record from one a dead page left (see
+ * `load`): it turns the text into an editable draft, so a prompt the other tab
+ * is about to confirm can come back in this one, and whichever tab writes last
+ * wins. One draft key is not meant to be used from two tabs at once.
  */
 import {
   MAX_ATTACHED_IMAGES,
@@ -268,7 +281,15 @@ function entryFromRecord(record: PersistedDraftRecord): DraftEntry {
   };
 }
 
-/** Cache hit, else hydrate from localStorage. A never-seen key stays out of the cache. */
+/**
+ * Cache hit, else hydrate from localStorage. A never-seen key stays out of the cache.
+ *
+ * A record still `pending` on disk is taken for one a dead page left behind: a
+ * submission of this page life is always cached already. Its text returns as
+ * an editable draft and the record is rewritten to say so. A live second tab's
+ * pending submission looks the same and is converted the same way (the known
+ * second-tab limit in the module header).
+ */
 function load(key: string): DraftEntry | undefined {
   const storageId = storageKey(key);
   const cached = cache.get(storageId);
@@ -524,52 +545,66 @@ export function isProvisionalDraftKey(key: string | null | undefined): boolean {
 export interface TrackedSubmission {
   readonly draftKey: string;
   readonly text: string;
+  /** Client-generated id the server echoes in this prompt's `prompt_done` / `prompt_error`. */
+  readonly promptId: string;
 }
 
 /**
  * What a session hook keeps about the submissions it dispatched, so that only
- * a confirmed turn settles exactly its own pending drafts (#88).
+ * the turn that carried a submission settles it (#88). An event for another id
+ * (another tab's prompt, a queued slash command, a stale or late event) or
+ * without one (an older remote) never confirms or restores a submission that
+ * is not its own.
  */
 export interface SubmissionTracker {
-  /** Starts tracking. Returns `null` when there is nothing durable to track: no draft key, or no text (images are never kept). */
-  track(draftKey: string | undefined, text: string): TrackedSubmission | null;
+  /** Starts tracking. Returns `null` when there is nothing durable to track: no draft key, no id, or no text (images are never kept). */
+  track(draftKey: string | undefined, text: string, promptId: string): TrackedSubmission | null;
   /**
-   * Stops tracking a submission that was rejected (the caller restores its text)
-   * or whose delivery is unknown: it stays on record and no later turn may confirm it.
+   * Stops tracking a submission whose delivery is unknown or that was rejected
+   * (the caller restores its text): it stays on record and no turn may confirm it.
    */
   untrack(submission: TrackedSubmission | null): void;
   /**
-   * The turn was confirmed: confirms every tracked submission, under the draft
-   * it was taken from and under `sessionId`, where a promoted new conversation's
-   * draft lives by now.
+   * Stops tracking and returns the submission dispatched under `promptId`;
+   * `null` when this tracker holds none (not its prompt, already settled, or no
+   * id at all). The submission stays on record: the caller restores its text
+   * or leaves it pending (an aborted turn).
    */
-  confirm(sessionId: string | null): void;
-  /** The turn errored or was aborted: nothing is confirmed, every tracked submission stays on record. */
-  keepOnRecord(): void;
+  takeById(promptId: string | undefined): TrackedSubmission | null;
+  /**
+   * The turn of `promptId` was confirmed: confirms exactly that submission,
+   * under the draft it was taken from and under `sessionId`, where a promoted
+   * new conversation's draft lives by now. Every other submission, one under
+   * the same draft key included, stays pending.
+   */
+  confirm(sessionId: string | null, promptId: string | undefined): void;
 }
 
 export function createSubmissionTracker(): SubmissionTracker {
   let tracked: TrackedSubmission[] = [];
+  const takeById = (promptId: string | undefined): TrackedSubmission | null => {
+    if (!promptId) return null;
+    const submission = tracked.find((candidate) => candidate.promptId === promptId);
+    if (!submission) return null;
+    tracked = tracked.filter((candidate) => candidate !== submission);
+    return submission;
+  };
   return {
-    track(draftKey, text) {
-      if (!draftKey || !text.trim()) return null;
-      const submission = { draftKey, text };
+    track(draftKey, text, promptId) {
+      if (!draftKey || !promptId || !text.trim()) return null;
+      const submission = { draftKey, text, promptId };
       tracked.push(submission);
       return submission;
     },
     untrack(submission) {
       if (submission) tracked = tracked.filter((candidate) => candidate !== submission);
     },
-    confirm(sessionId) {
-      const confirmed = tracked;
-      tracked = [];
-      for (const { draftKey, text } of confirmed) {
-        confirmDraft(draftKey, text);
-        if (sessionId && sessionId !== draftKey) confirmDraft(sessionId, text);
-      }
-    },
-    keepOnRecord() {
-      tracked = [];
+    takeById,
+    confirm(sessionId, promptId) {
+      const submission = takeById(promptId);
+      if (!submission) return;
+      confirmDraft(submission.draftKey, submission.text);
+      if (sessionId && sessionId !== submission.draftKey) confirmDraft(sessionId, submission.text);
     },
   };
 }

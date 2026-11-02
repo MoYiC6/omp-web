@@ -688,6 +688,14 @@ export class AgentSessionWrapper {
         // Fire and forget — events come via subscribe
         const promptImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
         const streamingBehavior = command.streamingBehavior as "steer" | "followUp" | undefined;
+        // The browser's id for this prompt, echoed in its outcome events so a
+        // client settles or restores only its own submission (#88). A queued
+        // prompt (streamingBehavior) reports its own outcome the same way.
+        const promptId = typeof command.promptId === "string" && command.promptId ? command.promptId : undefined;
+        const promptEvent = {
+          ...(promptId ? { promptId } : {}),
+          ...(streamingBehavior ? { streamingBehavior } : {}),
+        };
         this.promptRunning = true;
         notifyRunningChange();
         this.inner.prompt(command.message as string, {
@@ -697,10 +705,8 @@ export class AgentSessionWrapper {
         }).then(() => {
           this.promptRunning = false;
           this.resetIdleTimer();
-          if (!streamingBehavior) {
-            this.emit({ type: "prompt_done" });
-            void this.maybeAutoGenerateTitle(command.message as string);
-          }
+          this.emit({ type: "prompt_done", ...promptEvent });
+          if (!streamingBehavior) void this.maybeAutoGenerateTitle(command.message as string);
           notifyRunningChange();
         }).catch((error) => {
           this.promptRunning = false;
@@ -709,8 +715,9 @@ export class AgentSessionWrapper {
           this.emit({
             type: "prompt_error",
             errorMessage: error instanceof Error ? error.message : String(error),
+            ...promptEvent,
           });
-          if (!streamingBehavior) this.emit({ type: "prompt_done" });
+          if (!streamingBehavior) this.emit({ type: "prompt_done", ...promptEvent });
           notifyRunningChange();
         });
         return null;
