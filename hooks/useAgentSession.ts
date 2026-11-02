@@ -17,6 +17,7 @@ import { normalizeToolCalls } from "@/lib/normalize";
 import { stripAnsi } from "@/lib/ansi";
 import { apiPath } from "@/lib/api-path";
 import { apiErrorMessage, isPromptRejectedError, sendAgentCommand } from "@/lib/agent-client";
+import { confirmDraft, createSubmissionTracker, rekeyDraft } from "@/lib/draft-store";
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { ContextUsage, SessionStatsInfo, SlashCommandInfo } from "@/lib/omp-types";
 import type { ModelRoleAssignment } from "@/lib/api-types";
@@ -214,11 +215,26 @@ class EventStreamConnectionError extends Error {
   }
 }
 
-function createNoticeId(): string {
+// Unique across tabs and page lives. crypto.randomUUID needs a secure context
+// and omp-web is also served over plain HTTP on the LAN, hence the fallback.
+function createClientId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
   }
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+/**
+ * A queued steer / follow-up is acknowledged by its HTTP response alone: the
+ * server awaits the queue call and no prompt_done / prompt_error follows, so
+ * waiting for a turn event would leave its draft pending for good (#88). The
+ * first send of a new conversation may have rekeyed the composer to the session
+ * id meanwhile, so the submission is looked up under both keys.
+ */
+function confirmQueuedDraft(sessionId: string, draftKey: string | undefined, message: string): void {
+  if (!draftKey || !message.trim()) return;
+  confirmDraft(draftKey, message);
+  if (sessionId !== draftKey) confirmDraft(sessionId, message);
 }
 
 function delay(ms: number): Promise<void> {
@@ -440,6 +456,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const promptRunIdRef = useRef(0);
   const contextUsageRequestIdRef = useRef(0);
   const optimisticUserMessageKeyRef = useRef<string | null>(null);
+  // Composer submissions the server has not confirmed yet (#88). ChatInput keeps
+  // each one as a pending draft. Every prompt carries a client-generated
+  // promptId that the server echoes in its prompt_done / prompt_error, so only
+  // the event with a submission's own id confirms or restores it: another tab's
+  // prompt, a queued slash command, a stale event or an event without an id (an
+  // older remote) never touches a draft that is not theirs. inFlightPromptRef
+  // is this hook's main prompt, with the images the tracker does not keep, for
+  // its own prompt_error to give back to the composer.
+  const [submissions] = useState(createSubmissionTracker);
+  const inFlightPromptRef = useRef<{ promptId: string; message: string; images?: AttachedImage[] } | null>(null);
   const modelSwitchPendingRef = useRef(false);
 
   const setToolPresetState = opts.setToolPreset ?? setToolPreset;
@@ -590,6 +616,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const sid = sessionIdRef.current;
     if (!isNew || !newSessionCwd || !sid || newSessionPromotedRef.current) return;
     newSessionPromotedRef.current = true;
+    // The composer is keyed by the session id from here on. Move its draft in the
+    // store first: ChatWindow can replace the composer instead of re-keying it
+    // (the first optimistic message and the settle's reload flip the layout), and
+    // a replacement mounts straight under the session id, so nothing else would
+    // carry a prompt restored under `new:<cwd>` by a prompt_error that beat the
+    // prompt POST. A composer that survives rekeys again from its own effect; the
+    // store makes that second move a no-op.
+    rekeyDraft(`new:${newSessionCwd}`, sid);
     onSessionCreated?.({
       id: sid,
       path: "",
@@ -833,7 +867,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     dispatchNotice({
       type: "add",
       notice: {
-        id: notice.id ?? createNoticeId(),
+        id: notice.id ?? createClientId(),
         message,
         type: notice.type ?? "info",
       },
@@ -922,6 +956,49 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     onAgentEnd?.();
     return true;
   }, [onAgentEnd]);
+
+  // prompt_done: the turn of the event's `promptId` completed, so exactly that
+  // submission is confirmed, under whichever draft key it lives under by now. A
+  // prompt_error or an abort took the submission out of the tracker beforehand,
+  // so the prompt_done that follows a failed turn confirms nothing, and neither
+  // does an event for another id, a stale one, or one without an id (an older
+  // remote).
+  const confirmPrompt = useCallback((event: AgentEvent) => {
+    const promptId = typeof event.promptId === "string" ? event.promptId : undefined;
+    if (promptId && inFlightPromptRef.current?.promptId === promptId) inFlightPromptRef.current = null;
+    submissions.confirm(sessionIdRef.current, promptId);
+  }, [submissions]);
+
+  // prompt_error: the server accepted the request but rejected the prompt of the
+  // event's `promptId`, so it never reached the agent. Only that prompt goes back
+  // to the composer: this hook's main prompt (text and images) or a queued one
+  // (`streamingBehavior` set; its tracked text). An id that is not ours (another
+  // tab, an extension) or none at all (an older remote) restores nothing and
+  // leaves every draft alone. The target is the draft the user sees, not the key
+  // the text was taken from: a first send is typed under `new:<cwd>`, and the
+  // composer is keyed by the session id once that conversation is promoted. From
+  // the promotion on the draft and its carried submission live under the session
+  // id (promoteNewSession moved them) even while the composer's own re-key is
+  // still pending, so that key is named then; before it, the composer's own key
+  // (`new:<cwd>`) is the right one and none is passed.
+  const restoreRejectedPrompt = useCallback((event: AgentEvent) => {
+    const promptId = typeof event.promptId === "string" ? event.promptId : undefined;
+    let prompt: { message: string; images?: AttachedImage[] } | null = null;
+    if (typeof event.streamingBehavior === "string") {
+      const submission = submissions.takeById(promptId);
+      if (submission) prompt = { message: submission.text };
+    } else if (promptId && inFlightPromptRef.current?.promptId === promptId) {
+      prompt = inFlightPromptRef.current;
+      inFlightPromptRef.current = null;
+      submissions.takeById(promptId);
+    }
+    if (!prompt) return;
+    opts.chatInputRef?.current?.restoreSubmission?.(
+      prompt.message,
+      prompt.images?.map(({ data, mimeType }) => ({ data, mimeType })),
+      newSessionPromotedRef.current ? (sessionIdRef.current ?? undefined) : undefined,
+    );
+  }, [opts.chatInputRef, submissions]);
 
   const scheduleEventStreamClose = useCallback((sid: string) => {
     cancelEventStreamGrace();
@@ -1216,10 +1293,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
       case "prompt_done":
         {
+          // A prompt queued into a running turn (slash command, steer / follow-up
+          // behavior) finishing says nothing about the main turn: only its own
+          // submission is settled and the UI stage is left to the main prompt.
+          if (typeof event.streamingBehavior === "string") {
+            confirmPrompt(event);
+            break;
+          }
           const runId = promptRunIdRef.current;
           const promptWasPending = rpcPromptPendingRef.current;
           rpcPromptPendingRef.current = false;
           optimisticUserMessageKeyRef.current = null;
+          // Confirms the submission of this prompt only, even when the poll
+          // fallback already settled the UI (a late event must not leave the
+          // draft pending) and never one dispatched under another id.
+          confirmPrompt(event);
           const firstNotification = notifyPromptStage(runId);
           if (!promptWasPending && !firstNotification) break;
 
@@ -1236,6 +1324,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         break;
       case "prompt_error":
         addNotice({ type: "error", message: (event.errorMessage as string | undefined) ?? "Command failed" });
+        restoreRejectedPrompt(event);
         break;
       case "mode_change": {
         // Server-side transitions (toggle, /plan, plan approval) push the new
@@ -1449,7 +1538,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         handleExtensionUiRequest(event as ExtensionUiRequest);
         break;
     }
-  }, [addNotice, cancelEventStreamGrace, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, onSessionRenamed, refreshContextUsage, scheduleEventStreamClose, settleUiStage]);
+  }, [addNotice, cancelEventStreamGrace, confirmPrompt, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, onSessionRenamed, refreshContextUsage, restoreRejectedPrompt, scheduleEventStreamClose, settleUiStage]);
   handleAgentEventRef.current = handleAgentEvent;
 
   // A send path that failed before the server accepted the submission must
@@ -1473,10 +1562,24 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     );
   }, [addNotice, opts.chatInputRef]);
 
-  const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {
+  // `draftKey` is the composer draft the text was taken from (ChatInput passes
+  // it): it stays a pending draft until the turn is confirmed, and a rejected
+  // send is restored into exactly that draft.
+  const handleSend = useCallback(async (message: string, images?: AttachedImage[], draftKey?: string) => {
     const trimmedMessage = message.trim();
     if (!trimmedMessage && !images?.length) return;
-    if (agentRunningRef.current || bashRunningRef.current) return;
+    if (agentRunningRef.current || bashRunningRef.current) {
+      // ChatInput already took the text out of the composer (it stays a pending
+      // draft). This send cannot start, so hand the text back rather than drop it.
+      restoreFailedSubmission(
+        "Failed to send message:",
+        new Error(bashRunningRef.current ? "Cannot send while a shell command is running" : "Cannot send while the agent is running"),
+        message,
+        images,
+        draftKey,
+      );
+      return;
+    }
     const isSlashCommandPrompt = !images?.length && trimmedMessage.startsWith("/");
 
     const isBashCommand = !images?.length && trimmedMessage.startsWith("!");
@@ -1489,8 +1592,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
 
     const promptRunId = promptRunIdRef.current + 1;
+    // The server echoes this id in the prompt's prompt_done / prompt_error: it
+    // is what attributes those events to this submission and to no other (#88).
+    const promptId = createClientId();
     cancelEventStreamGrace();
     rpcPromptPendingRef.current = true;
+    // From here the text is an unconfirmed submission (#88): it stays a pending
+    // draft until this prompt's own prompt_done confirms the turn.
+    const submission = submissions.track(draftKey, message, promptId);
+    inFlightPromptRef.current = { promptId, message, images };
 
     const imageBlocks = images?.map((img) => ({ type: "image" as const, source: { type: "base64" as const, media_type: img.mimeType, data: img.data } }));
     const userMsg: AgentMessage = {
@@ -1531,6 +1641,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           promptRequestStarted = true;
           await sendAgentCommand(sid, {
             type: "prompt",
+            promptId,
             message,
             ...(piImages?.length ? { images: piImages } : {}),
           });
@@ -1542,6 +1653,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         promptRequestStarted = true;
         await sendAgentCommand(session.id, {
           type: "prompt",
+          promptId,
           message,
           ...(piImages?.length ? { images: piImages } : {}),
         });
@@ -1555,6 +1667,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // have accepted the prompt before the response was lost. Keep SSE alive
       // until server state confirms the run is idle.
       if (!definitivelyRejected && sentSessionId) {
+        // Delivery is unknown: the draft stays on record, and no event (not even
+        // one naming this promptId) may confirm it.
+        submissions.untrack(submission);
         void waitForPromptSettlement(sentSessionId, promptRunId);
         return;
       }
@@ -1579,14 +1694,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         e,
         message,
         images,
-        session?.id ?? sentSessionId ?? undefined,
+        // The draft the text came from. For a first send that is still the
+        // provisional `new:<cwd>` key: the session id only becomes the
+        // composer's key once promoteNewSession ran, so it is never the target.
+        draftKey,
       );
+      // The text is back in the composer: nothing is left unconfirmed.
+      submissions.untrack(submission);
+      inFlightPromptRef.current = null;
       optimisticUserMessageKeyRef.current = null;
       setAgentRunning(false);
       setAgentPhase(null);
       dispatch({ type: "end" });
     }
-  }, [isNew, newSessionCwd, newSessionModel, session, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, restoreFailedSubmission, cancelEventStreamGrace, closeEvents]);
+  }, [isNew, newSessionCwd, newSessionModel, session, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, restoreFailedSubmission, cancelEventStreamGrace, closeEvents, submissions]);
 
   const executeBash = useCallback(async (command: string, excludeFromContext: boolean) => {
     if (agentRunningRef.current || bashRunningRef.current) return;
@@ -1629,11 +1750,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       return;
     }
     try {
+      // An aborted turn may never have recorded the prompt: its submission
+      // leaves the tracker, so no event can confirm it, and its draft stays on record.
+      const inFlight = agentRunningRef.current ? inFlightPromptRef.current : null;
+      if (inFlight) {
+        submissions.takeById(inFlight.promptId);
+        inFlightPromptRef.current = null;
+      }
       await sendAgentCommand(sid, { type: "abort" });
     } catch (e) {
       console.error("Failed to abort:", e);
     }
-  }, []);
+  }, [submissions]);
 
   const handleFork = useCallback(async (entryId: string) => {
     if (bashRunningRef.current) return;
@@ -1945,9 +2073,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // the real user message when pi delivers it (user message_end event). An
   // optimistic chat bubble here would duplicate the queue panel and turn into
   // a ghost message if the queue is recalled.
-  const handleSteer = useCallback(async (message: string, images?: AttachedImage[]) => {
+  const handleSteer = useCallback(async (message: string, images?: AttachedImage[], draftKey?: string) => {
     const sid = sessionIdRef.current;
-    if (!sid) return;
+    if (!sid) {
+      restoreFailedSubmission("Failed to steer:", new Error("No active session"), message, images, draftKey);
+      return;
+    }
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
     try {
       await sendAgentCommand(sid, {
@@ -1959,33 +2090,50 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // The queue never took the message server-side, so it must come back
       // to the composer — otherwise a failed steer silently eats the text
       // (#83). The queue panel is untouched (server state).
-      restoreFailedSubmission("Failed to steer:", e, message, images, sid);
+      restoreFailedSubmission("Failed to steer:", e, message, images, draftKey);
+      return;
     }
+    confirmQueuedDraft(sid, draftKey, message);
   }, [restoreFailedSubmission]);
 
   const handlePromptWithStreamingBehavior = useCallback(async (
     message: string,
     behavior: "steer" | "followUp",
     images?: AttachedImage[],
+    draftKey?: string,
   ) => {
     const sid = sessionIdRef.current;
-    if (!sid) return;
+    if (!sid) {
+      restoreFailedSubmission("Failed to queue prompt:", new Error("No active session"), message, images, draftKey);
+      return;
+    }
+    // Unlike a plain steer / follow-up this goes through the prompt path: its
+    // outcome is its own prompt_done (confirms the draft) or prompt_error (puts
+    // the text back), flagged with this id and `streamingBehavior`. Neither
+    // touches the main turn that is running.
+    const promptId = createClientId();
+    const submission = submissions.track(draftKey, message, promptId);
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
     try {
       await sendAgentCommand(sid, {
         type: "prompt",
+        promptId,
         message,
         streamingBehavior: behavior,
         ...(piImages?.length ? { images: piImages } : {}),
       });
     } catch (e) {
-      restoreFailedSubmission("Failed to queue prompt:", e, message, images, sid);
+      submissions.untrack(submission);
+      restoreFailedSubmission("Failed to queue prompt:", e, message, images, draftKey);
     }
-  }, [restoreFailedSubmission]);
+  }, [restoreFailedSubmission, submissions]);
 
-  const handleFollowUp = useCallback(async (message: string, images?: AttachedImage[]) => {
+  const handleFollowUp = useCallback(async (message: string, images?: AttachedImage[], draftKey?: string) => {
     const sid = sessionIdRef.current;
-    if (!sid) return;
+    if (!sid) {
+      restoreFailedSubmission("Failed to follow up:", new Error("No active session"), message, images, draftKey);
+      return;
+    }
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
     try {
       await sendAgentCommand(sid, {
@@ -1994,8 +2142,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         ...(piImages?.length ? { images: piImages } : {}),
       });
     } catch (e) {
-      restoreFailedSubmission("Failed to follow up:", e, message, images, sid);
+      restoreFailedSubmission("Failed to follow up:", e, message, images, draftKey);
+      return;
     }
+    confirmQueuedDraft(sid, draftKey, message);
   }, [restoreFailedSubmission]);
 
   const handleAbortCompaction = useCallback(async () => {
