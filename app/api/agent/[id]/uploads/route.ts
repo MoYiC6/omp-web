@@ -8,7 +8,9 @@ import { resolveSessionPath } from "@/lib/session-reader";
 import { parseFormDataWithinLimit, RequestBodyTooLargeError } from "@/lib/bounded-form-data";
 import { allowFileRoot } from "@/lib/file-access";
 import {
+  getSessionTempUploadDir,
   isBinaryUploadName,
+  isPdfUploadName,
   looksBinaryHeader,
   nextAvailableUploadPath,
   validateUploadFileNames,
@@ -43,13 +45,16 @@ function writeUploadFile(dir: string, name: string, bytes: Buffer): string {
   return dest;
 }
 
-// POST /api/agent/[id]/uploads - Attach text files to a chat session.
+// POST /api/agent/[id]/uploads - Attach files to a chat session.
 //
-// Files land in a permanent, workspace-external directory
+// Text files land in a permanent, workspace-external directory
 // (~/.omp/agent/uploads/<sessionId>/) rather than the session's cwd, so an
-// upload never writes into a user's project tree. The client inserts an
-// `@"<absolute path>"` mention for each accepted file; the SDK's own
-// @-mention pipeline resolves absolute paths as-is regardless of cwd.
+// upload never writes into a user's project tree. PDFs are accepted too, but
+// are stored in a per-session temp directory (os.tmpdir()/omp-web-pdf-uploads/<sessionId>/)
+// instead; the SDK `read` tool converts them to text in-process. Other binary
+// files are rejected. The client inserts an `@"<absolute path>"` mention for
+// each accepted file; the SDK's own @-mention pipeline resolves absolute
+// paths as-is regardless of cwd.
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -94,15 +99,26 @@ export async function POST(
     return NextResponse.json({ error: "Invalid session id" }, { status: 400 });
   }
 
-  const dir = path.join(getAgentDir(), "uploads", id);
-  fs.mkdirSync(dir, { recursive: true });
-  fs.chmodSync(dir, 0o700);
-
   const uploaded: Array<{ name: string; path: string; size: number }> = [];
   const errors: Array<{ name: string; error: string }> = [];
 
+  // Target dirs are created lazily (a PDF-only upload must not leave an empty
+  // permanent upload dir) and prepared at most once per request.
+  const preparedDirs = new Set<string>();
+  const prepareDir = (dir: string) => {
+    if (preparedDirs.has(dir)) return;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.chmodSync(dir, 0o700);
+    preparedDirs.add(dir);
+  };
+
+  const textDir = path.join(getAgentDir(), "uploads", id);
+  const pdfDir = getSessionTempUploadDir(id);
+  const writtenDirs = new Set<string>();
+
   for (const file of files) {
-    if (isBinaryUploadName(file.name)) {
+    const isPdf = isPdfUploadName(file.name);
+    if (!isPdf && isBinaryUploadName(file.name)) {
       errors.push({ name: file.name, error: `${file.name}: binary file not supported for chat upload` });
       continue;
     }
@@ -115,20 +131,23 @@ export async function POST(
       continue;
     }
 
-    if (looksBinaryHeader(bytes)) {
+    if (!isPdf && looksBinaryHeader(bytes)) {
       errors.push({ name: file.name, error: `${file.name}: binary file not supported for chat upload` });
       continue;
     }
 
+    const dir = isPdf ? pdfDir : textDir;
     try {
+      prepareDir(dir);
       const dest = writeUploadFile(dir, file.name, bytes);
+      writtenDirs.add(dir);
       uploaded.push({ name: path.basename(dest), path: dest, size: bytes.byteLength });
     } catch (error) {
       errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
     }
   }
 
-  if (uploaded.length > 0) {
+  for (const dir of writtenDirs) {
     allowFileRoot(dir);
   }
 

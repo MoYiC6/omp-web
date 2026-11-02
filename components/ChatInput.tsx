@@ -120,7 +120,7 @@ const TEXT_UPLOAD_ACCEPT = [
   ".log", ".csv", ".tsv", ".xml", ".html", ".htm", ".css", ".scss", ".less", ".js", ".jsx", ".mjs", ".cjs",
   ".ts", ".tsx", ".py", ".rb", ".go", ".rs", ".java", ".kt", ".c", ".h", ".cpp", ".hpp", ".cc", ".hh", ".cs",
   ".php", ".swift", ".m", ".mm", ".sh", ".bash", ".zsh", ".fish", ".ps1", ".bat", ".cmd", ".sql", ".graphql",
-  ".proto", ".dockerfile", ".editorconfig", ".gitignore", ".diff", ".patch", ".lock",
+  ".proto", ".dockerfile", ".editorconfig", ".gitignore", ".diff", ".patch", ".lock", ".pdf",
 ].join(",");
 
 const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
