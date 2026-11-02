@@ -17,7 +17,7 @@ import { normalizeToolCalls } from "@/lib/normalize";
 import { stripAnsi } from "@/lib/ansi";
 import { apiPath } from "@/lib/api-path";
 import { apiErrorMessage, isPromptRejectedError, sendAgentCommand } from "@/lib/agent-client";
-import { confirmDraft, createSubmissionTracker } from "@/lib/draft-store";
+import { confirmDraft, createSubmissionTracker, rekeyDraft } from "@/lib/draft-store";
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { ContextUsage, SessionStatsInfo, SlashCommandInfo } from "@/lib/omp-types";
 import type { ModelRoleAssignment } from "@/lib/api-types";
@@ -616,6 +616,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const sid = sessionIdRef.current;
     if (!isNew || !newSessionCwd || !sid || newSessionPromotedRef.current) return;
     newSessionPromotedRef.current = true;
+    // The composer is keyed by the session id from here on. Move its draft in the
+    // store first: ChatWindow can replace the composer instead of re-keying it
+    // (the first optimistic message and the settle's reload flip the layout), and
+    // a replacement mounts straight under the session id, so nothing else would
+    // carry a prompt restored under `new:<cwd>` by a prompt_error that beat the
+    // prompt POST. A composer that survives rekeys again from its own effect; the
+    // store makes that second move a no-op.
+    rekeyDraft(`new:${newSessionCwd}`, sid);
     onSessionCreated?.({
       id: sid,
       path: "",
@@ -966,9 +974,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // to the composer: this hook's main prompt (text and images) or a queued one
   // (`streamingBehavior` set; its tracked text). An id that is not ours (another
   // tab, an extension) or none at all (an older remote) restores nothing and
-  // leaves every draft alone. The target is the visible composer, not the draft
-  // key the text was taken from: a first send is typed under `new:<cwd>`, and the
-  // composer is keyed by the session id once that conversation is promoted.
+  // leaves every draft alone. The target is the draft the user sees, not the key
+  // the text was taken from: a first send is typed under `new:<cwd>`, and the
+  // composer is keyed by the session id once that conversation is promoted. From
+  // the promotion on the draft and its carried submission live under the session
+  // id (promoteNewSession moved them) even while the composer's own re-key is
+  // still pending, so that key is named then; before it, the composer's own key
+  // (`new:<cwd>`) is the right one and none is passed.
   const restoreRejectedPrompt = useCallback((event: AgentEvent) => {
     const promptId = typeof event.promptId === "string" ? event.promptId : undefined;
     let prompt: { message: string; images?: AttachedImage[] } | null = null;
@@ -984,6 +996,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     opts.chatInputRef?.current?.restoreSubmission?.(
       prompt.message,
       prompt.images?.map(({ data, mimeType }) => ({ data, mimeType })),
+      newSessionPromotedRef.current ? (sessionIdRef.current ?? undefined) : undefined,
     );
   }, [opts.chatInputRef, submissions]);
 

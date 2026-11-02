@@ -213,9 +213,10 @@ test("every prompt carries a promptId and only its own events settle its draft (
   );
 
   // The hook reaches a draft only through the tracker, plus the one direct
-  // confirm a queued steer / follow-up needs (below). The global flags that
-  // let one prompt's error or abort decide another prompt's fate are gone.
-  assert.match(source, /import \{ confirmDraft, createSubmissionTracker \} from "@\/lib\/draft-store";/);
+  // confirm a queued steer / follow-up needs (below) and the promotion rekey
+  // (next test). The global flags that let one prompt's error or abort decide
+  // another prompt's fate are gone.
+  assert.match(source, /import \{ confirmDraft, createSubmissionTracker, rekeyDraft \} from "@\/lib\/draft-store";/);
   assert.match(source, /const \[submissions\] = useState\(createSubmissionTracker\);/);
   assert.doesNotMatch(source, /clearDraft|setDraft\(/);
   assert.equal(source.match(/confirmDraft\(/g)?.length, 2, "only confirmQueuedDraft confirms directly");
@@ -260,9 +261,11 @@ test("every prompt carries a promptId and only its own events settle its draft (
   // in-flight prompt; it leaves the tracker in the same step, so the prompt_done
   // that follows a failed turn confirms nothing.
   assert.match(restoreSource, /\} else if \(promptId && inFlightPromptRef\.current\?\.promptId === promptId\) \{\s*prompt = inFlightPromptRef\.current;\s*inFlightPromptRef\.current = null;\s*submissions\.takeById\(promptId\);\s*\}/);
-  // No target draft key: ChatInput restores into the composer on screen, which is
-  // `new:<cwd>` before promotion and the session id after it.
-  assert.match(restoreSource, /restoreSubmission\?\.\(\s*prompt\.message,\s*prompt\.images\?\.map\(\(\{ data, mimeType \}\) => \(\{ data, mimeType \}\)\),\s*\);/);
+  // Before the promotion no target key is passed: ChatInput restores into the
+  // composer on screen, keyed `new:<cwd>`. From the promotion on the session id
+  // is named, because promoteNewSession already moved the draft and its carried
+  // submission there while the composer's own re-key may still be pending.
+  assert.match(restoreSource, /restoreSubmission\?\.\(\s*prompt\.message,\s*prompt\.images\?\.map\(\(\{ data, mimeType \}\) => \(\{ data, mimeType \}\)\),\s*newSessionPromotedRef\.current \? \(sessionIdRef\.current \?\? undefined\) : undefined,\s*\);/);
 
   // The poll fallback runs when SSE was lost: it settles the UI but cannot tell a
   // finished turn from a prompt_error it missed, so it must not confirm.
@@ -290,6 +293,33 @@ test("every prompt carries a promptId and only its own events settle its draft (
 
   // A send the hook cannot start (agent or shell busy) hands the text back.
   assert.match(sendSource, /if \(agentRunningRef\.current \|\| bashRunningRef\.current\) \{[\s\S]*?restoreFailedSubmission\([\s\S]*?draftKey,\s*\);\s*return;/);
+});
+
+test("promoting a new conversation moves its draft to the session id before the shell is told (#88)", () => {
+  const promoteSource = source.slice(
+    source.indexOf("  const promoteNewSession = useCallback"),
+    source.indexOf("  const ensureNewSession = useCallback"),
+  );
+  const guardIndex = promoteSource.indexOf("newSessionPromotedRef.current = true;");
+  const rekeyIndex = promoteSource.indexOf("rekeyDraft(");
+  const createdIndex = promoteSource.indexOf("onSessionCreated?.(");
+
+  // A first send that fails with a prompt_error arriving before the prompt POST
+  // resolves restores its text under `new:<cwd>`. When the POST then resolves,
+  // ChatWindow can swap in a composer mounted straight under the session id,
+  // which never rekeys, so this store-level move is what carries the draft over.
+  assert.match(promoteSource, /if \(!isNew \|\| !newSessionCwd \|\| !sid \|\| newSessionPromotedRef\.current\) return;/);
+  assert.match(promoteSource, /rekeyDraft\(`new:\$\{newSessionCwd\}`, sid\);/);
+  assert.ok(guardIndex !== -1 && rekeyIndex !== -1 && createdIndex !== -1, "guard, rekey and onSessionCreated all present");
+  assert.ok(guardIndex < rekeyIndex, "the move runs once, behind the promotion guard");
+  assert.ok(rekeyIndex < createdIndex, "the move runs before onSessionCreated re-keys the composer");
+
+  // Every promotion path (first send, shell command, /compact, /name) goes
+  // through this one function, and it is the only rekey the hook performs.
+  assert.equal(source.match(/onSessionCreated\?\.\(/g)?.length, 1);
+  assert.equal(source.match(/rekeyDraft\(/g)?.length, 1);
+  // The provisional key is spelled exactly as ChatWindow keys the composer.
+  assert.match(chatWindowSource, /draftKey=\{session\?\.id \?\? \(newSessionCwd \? `new:\$\{newSessionCwd\}` : undefined\)\}/);
 });
 
 test("AppShell scopes persisted drafts to the resolved web user (#88)", () => {

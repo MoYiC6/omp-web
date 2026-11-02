@@ -610,9 +610,38 @@ export function createSubmissionTracker(): SubmissionTracker {
 }
 
 /**
+ * `current` (the draft being moved) after `stored` (already under the target
+ * key), repeating neither the text nor an attachment that both already hold.
+ */
+function reconcileDrafts(stored: ChatDraft, current: ChatDraft): ChatDraft {
+  // Each attachment of `current` accounts for one equal attachment of `stored`;
+  // the others are new. The same picture attached twice stays two attachments.
+  const unmatched = [...stored.images];
+  const added = current.images.filter((image) => {
+    const held = unmatched.findIndex((candidate) => (
+      candidate.data === image.data && candidate.mimeType === image.mimeType
+    ));
+    if (held === -1) return true;
+    unmatched.splice(held, 1);
+    return false;
+  });
+  // Only the attachment half of the restore merge is wanted (it applies the
+  // attachment limits); the text is reconciled instead of concatenated.
+  const { images } = mergeRestoredSubmissionDraft("", stored.images, "", added);
+  return { value: reconcileHydratedDraftText(stored.value, current.value), images };
+}
+
+/**
  * Moves the draft (and any unconfirmed submission) from `previousKey` to
  * `nextKey`, leaving `previousKey` empty. `currentDraft` is the live composer
  * content when it may be fresher than the store.
+ *
+ * Safe to repeat for one move: promoting a new conversation rekeys it from the
+ * session hook (`promoteNewSession`, store only) and again from the composer's
+ * key-change effect when that composer instance survives the promotion, so the
+ * second call finds the first one's result under `nextKey`. Text and attachments
+ * both already hold are kept once, and the submission moved by the first call
+ * is not moved again.
  */
 export function rekeyDraft(
   previousKey: string,
@@ -634,7 +663,7 @@ export function rekeyDraft(
   if (!previous && !carried) return next;
 
   const merged = previous && next
-    ? mergeRestoredSubmissionDraft(next.value, next.images, previous.value, previous.images)
+    ? reconcileDrafts(next, previous)
     : (previous ?? next);
   const target = load(nextKey) ?? newEntry();
   if (merged) target.draft = cloneDraft(merged);
