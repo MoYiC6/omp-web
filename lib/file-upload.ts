@@ -1,4 +1,5 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { getAgentDir } from "@oh-my-pi/pi-coding-agent";
 
@@ -61,7 +62,7 @@ export function inspectUploadTargets(directory: string, fileNames: string[]): Up
 
 const BINARY_UPLOAD_EXTENSIONS = new Set([
   "zip", "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tiff",
-  "pdf", "exe", "dll", "so", "dylib", "jar", "class", "war", "ear",
+  "exe", "dll", "so", "dylib", "jar", "class", "war", "ear",
   "woff", "woff2", "ttf", "otf", "eot", "mp3", "wav", "flac", "ogg",
   "mp4", "mov", "avi", "mkv", "webm", "sqlite", "db", "wasm", "bin",
   "iso", "dmg", "pkg", "deb", "rar", "7z", "gz", "xz", "bz2", "zst",
@@ -88,6 +89,20 @@ export function looksBinaryHeader(bytes: Uint8Array): boolean {
   return false;
 }
 
+/** True when `name` has a `.pdf` extension (case-insensitive). */
+export function isPdfUploadName(name: string): boolean {
+  return path.extname(name).slice(1).toLowerCase() === "pdf";
+}
+
+/**
+ * Per-session temp directory for uploaded PDFs (os.tmpdir()/omp-web-pdf-uploads/<sessionId>).
+ * PDFs are kept out of the permanent text-upload dir; the SDK `read` tool
+ * converts them to text in-process. The caller must pass a validated session id.
+ */
+export function getSessionTempUploadDir(sessionId: string): string {
+  return path.join(os.tmpdir(), "omp-web-pdf-uploads", sessionId);
+}
+
 /**
  * First filesystem path in `dir` not already occupied by `name`, suffixing
  * before the extension on collision: file.txt -> file-1.txt -> file-2.txt.
@@ -111,17 +126,25 @@ export function nextAvailableUploadPath(dir: string, name: string): string {
 // the id that route already used to name the on-disk upload directory.
 const UPLOAD_SESSION_ID_RE = /^[a-zA-Z0-9_-]+$/;
 
-/**
- * True when `filePath` sits inside `sessionId`'s permanent upload directory
- * (~/.omp/agent/uploads/<sessionId>/). Lets a file the user just uploaded to
- * a session be reopened even before the SDK's @-mention pipeline has made it
- * a recognized session reference.
- */
-export function isPathInSessionUploadDir(filePath: string, sessionId: string | null): boolean {
-  if (sessionId == null || !UPLOAD_SESSION_ID_RE.test(sessionId)) return false;
-  const root = path.resolve(path.join(getAgentDir(), "uploads", sessionId));
+function isInsideDir(filePath: string, dir: string): boolean {
+  const root = path.resolve(dir);
   const target = path.resolve(filePath);
   if (target === root) return true;
   const rootWithSep = root.endsWith(path.sep) ? root : root + path.sep;
   return target.startsWith(rootWithSep);
+}
+
+/**
+ * True when `filePath` sits inside one of `sessionId`'s upload directories:
+ * the permanent text-upload dir (~/.omp/agent/uploads/<sessionId>/) or the
+ * per-session PDF temp dir (see getSessionTempUploadDir). Lets a file the
+ * user just uploaded to a session be reopened even before the SDK's
+ * @-mention pipeline has made it a recognized session reference.
+ */
+export function isPathInSessionUploadDir(filePath: string, sessionId: string | null): boolean {
+  if (sessionId == null || !UPLOAD_SESSION_ID_RE.test(sessionId)) return false;
+  return (
+    isInsideDir(filePath, path.join(getAgentDir(), "uploads", sessionId)) ||
+    isInsideDir(filePath, getSessionTempUploadDir(sessionId))
+  );
 }

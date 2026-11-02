@@ -339,4 +339,8 @@ test("classifies attachments as images even when the picker reports no media typ
   assert.equal(resolveImageMimeType({ name: "scan.heic", type: "" }), "image/heic");
   assert.equal(resolveImageMimeType({ name: "archive.zip", type: "" }), null);
   assert.equal(resolveImageMimeType({ name: "README", type: "" }), null);
+  // PDFs are attachments but not images: they must reach the file uploader
+  // (temp-dir path), not the image attachment path (#87).
+  assert.equal(resolveImageMimeType({ name: "report.pdf", type: "application/pdf" }), null);
+  assert.equal(resolveImageMimeType({ name: "REPORT.PDF", type: "" }), null);
 });
