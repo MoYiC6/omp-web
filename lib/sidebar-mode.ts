@@ -1,7 +1,7 @@
 /**
- * Tri-state sidebar mode (issue #22) — "table" (default full list), "strip"
- * (auto-collapse, desktop-only), "drawer" (expanded detail view). Shared
- * between AppShell (owns the pixel width + auto-collapse trigger) and
+ * Sidebar mode (issue #22) — "table" (default full list) or "drawer"
+ * (expanded detail view, desktop-only). Shared between AppShell (owns the
+ * pixel width) and
  * SessionSidebar (renders each mode) so both sides agree on the type and
  * the persisted value.
  *
@@ -11,7 +11,7 @@
 
 import { machineStorageKey } from "./api-path";
 
-export type SidebarMode = "table" | "strip" | "drawer";
+export type SidebarMode = "table" | "drawer";
 
 const SIDEBAR_MODE_STORAGE_KEY = "omp-web:sidebar-mode";
 
@@ -19,7 +19,7 @@ export function loadSidebarMode(): SidebarMode {
   if (typeof window === "undefined") return "table";
   try {
     const raw = window.localStorage.getItem(machineStorageKey(SIDEBAR_MODE_STORAGE_KEY));
-    return raw === "table" || raw === "strip" || raw === "drawer" ? raw : "table";
+    return raw === "table" || raw === "drawer" ? raw : "table";
   } catch {
     return "table";
   }

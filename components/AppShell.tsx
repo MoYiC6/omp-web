@@ -61,7 +61,6 @@ import {
   SIDEBAR_DRAWER_MIN_WIDTH,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
-  SIDEBAR_STRIP_WIDTH,
 } from "@/lib/panel-layout";
 import type { BlockingExtensionUiRequest, SessionInfo, SessionTreeNode, SubagentSnapshot } from "@/lib/types";
 import type { ProjectTrustStatus } from "@/lib/api-types";
@@ -146,10 +145,9 @@ function AppShellBody({ initialTarget, initialSession, resolutionRevision }: App
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
-  // Tri-state sidebar width mode (issue #22): "table" (default), "strip"
-  // (auto-collapse, desktop-only), "drawer" (expanded detail view,
-  // desktop-only). Read from storage after mount so the server render stays
-  // deterministic, matching the terminalFontSize pattern above.
+  // Sidebar width mode (issue #22): "table" (default) or "drawer" (expanded
+  // detail view, desktop-only). Read from storage after mount so the server
+  // render stays deterministic, matching the terminalFontSize pattern above.
   const [sidebarMode, setSidebarModeState] = useState<SidebarMode>("table");
   useEffect(() => {
     setSidebarModeState(loadSidebarMode());
@@ -211,8 +209,8 @@ function AppShellBody({ initialTarget, initialSession, resolutionRevision }: App
   });
   const reclampSidebarWidth = sidebarResizer.reclampWidth;
   const reclampRightPanelWidth = rightPanelResizer.reclampWidth;
-  // Mobile always renders the sidebar as today's overlay drawer — strip and
-  // drawer modes are desktop-only (owner steering on issue #22) — so force
+  // Mobile always renders the sidebar as today's overlay drawer — drawer
+  // mode is desktop-only (owner steering on issue #22) — so force
   // "table" regardless of the persisted preference while isMobile is true.
   const effectiveSidebarMode: SidebarMode = isMobile ? "table" : sidebarMode;
   // Tracks the viewport width for the drawer-width formula below (a fixed
@@ -239,11 +237,9 @@ function AppShellBody({ initialTarget, initialSession, resolutionRevision }: App
         cap: SIDEBAR_DRAWER_MAX_WIDTH,
       }),
     );
-  const effectiveSidebarWidth = effectiveSidebarMode === "strip"
-    ? SIDEBAR_STRIP_WIDTH
-    : effectiveSidebarMode === "drawer"
-      ? drawerWidth
-      : sidebarResizer.width;
+  const effectiveSidebarWidth = effectiveSidebarMode === "drawer"
+    ? drawerWidth
+    : sidebarResizer.width;
   // On mobile the sidebar is an overlay drawer; hide it by default so the chat
   // is visible on load. Runs once the breakpoint resolves after hydration.
   useEffect(() => {
@@ -675,11 +671,8 @@ function AppShellBody({ initialTarget, initialSession, resolutionRevision }: App
     setSystemPrompt(null);
     // On mobile, collapse the overlay drawer so the chat is revealed after pick.
     if (isMobile) setSidebarOpen(false);
-    // Opening a conversation auto-collapses the sidebar to the strip
-    // (issue #22); desktop-only per owner steering.
-    if (!isMobile) handleSidebarModeChange("strip");
     nav.navigate({ machineId: machines.machineId, project: session.projectRoot ?? session.cwd, session: session.id }, { history: "push" });
-  }, [nav, machines.machineId, isMobile, selectedSession, handleSidebarModeChange]);
+  }, [nav, machines.machineId, isMobile, selectedSession]);
 
   const handleNewSession = useCallback((_sessionId: string, cwd: string) => {
     setSelectedSession(null);
@@ -690,11 +683,8 @@ function AppShellBody({ initialTarget, initialSession, resolutionRevision }: App
     setSystemPrompt(null);
     setActiveTopPanel(null);
     if (isMobile) setSidebarOpen(false);
-    // A brand-new session is a conversation opening too — auto-collapse to
-    // the strip, matching handleSelectSession (issue #22 review finding).
-    if (!isMobile) handleSidebarModeChange("strip");
     nav.navigate({ machineId: machines.machineId, project: cwd, session: null }, { history: "push" });
-  }, [nav, machines.machineId, isMobile, handleSidebarModeChange]);
+  }, [nav, machines.machineId, isMobile]);
 
   // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.)
   useGlobalKeyboardShortcuts({

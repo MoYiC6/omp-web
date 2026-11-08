@@ -5,12 +5,10 @@ export const SIDEBAR_DEFAULT_WIDTH = 260;
 export const SIDEBAR_MIN_WIDTH = 180;
 export const SIDEBAR_MAX_WIDTH = 480;
 
-// Sidebar tri-state modes (issue #22): the resizable "table" width above
-// uses SIDEBAR_MIN/MAX_WIDTH unchanged. "strip" is a fixed, non-resizable
-// auto-collapse rail (~5 CJK characters + padding); "drawer" is a fixed,
-// non-resizable wide detail view, clamped like the table width but against
-// a taller cap so it can genuinely show more columns.
-export const SIDEBAR_STRIP_WIDTH = 92;
+// Sidebar modes (issue #22): the resizable "table" width above uses
+// SIDEBAR_MIN/MAX_WIDTH unchanged. "drawer" is a fixed, non-resizable wide
+// detail view, clamped like the table width but against a taller cap so it
+// can genuinely show more columns.
 export const SIDEBAR_DRAWER_MIN_WIDTH = 460;
 export const SIDEBAR_DRAWER_DEFAULT_WIDTH = 580;
 export const SIDEBAR_DRAWER_MAX_WIDTH = 780;

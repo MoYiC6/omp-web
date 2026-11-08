@@ -15,7 +15,6 @@ import { useIssueTitleResolver, type IssueTitleResolver } from "@/hooks/useIssue
 import { useI18n } from "@/hooks/useI18n";
 import { useWebUser } from "@/hooks/useWebUser";
 import { useSessionList } from "@/lib/session-list-context";
-import { SessionStrip } from "./SessionStrip";
 import { IssueChips, fullStamp } from "./HomeCalendar";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { OmpWordmark } from "./OmpWordmark";
@@ -103,7 +102,7 @@ interface Props {
    *  Lets the app play a cross-workspace completion tone. */
   onBackgroundTaskDone?: () => void;
   onOpenMachinesSettings: () => void;
-  /** Tri-state width mode (issue #22) — owned by AppShell, which also
+  /** Width mode (issue #22) — owned by AppShell, which also
    *  computes the effective `--sidebar-width` CSS var per mode and forces
    *  "table" on mobile viewports. */
   sidebarMode: SidebarMode;
@@ -868,10 +867,6 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
     }
   }, [rowPopover]);
 
-  useEffect(() => {
-    if (sidebarMode === "strip") closeRowPopover();
-  }, [sidebarMode, closeRowPopover]);
-
   // Re-resolve the live session by id on every render so status/messageCount
   // /modified stay fresh while hovered, instead of the frozen snapshot
   // captured when the popover opened. Positioning (left/top/placeAbove)
@@ -941,17 +936,6 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
       </div>
     </div>
   ) : null;
-
-  if (!isMobile && sidebarMode === "strip") {
-    return (
-      <SessionStrip
-        sessions={sessionsForDisplay}
-        selectedSessionId={selectedSessionId}
-        onSelectSession={handleSelectSessionFromList}
-        onExpand={() => onSidebarModeChange("table")}
-      />
-    );
-  }
 
   const treeMode: "table" | "drawer" = !isMobile && sidebarMode === "drawer" ? "drawer" : "table";
 
