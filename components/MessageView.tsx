@@ -247,6 +247,10 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     return null;
   }
   if (message.role === "custom") {
+    if ((message as CustomMessage).customType === "todo_reminder") {
+      const phases = getTodoPreviewPhases({ type: "toolCall", toolCallId: "todo-reminder", toolName: "todo", input: {} }, { role: "toolResult", toolCallId: "todo-reminder", content: [], details: (message as CustomMessage).details });
+      return phases ? <TodoChecklistPreview phases={phases} /> : null;
+    }
     if ((message as CustomMessage).customType === "compaction") {
       return <CompactionMessageView message={message as CustomMessage} />;
     }
@@ -883,7 +887,7 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
       <ConsoleOutputPreview
         command={isRecord(block.input) && typeof block.input.command === "string" ? block.input.command : ""}
         output={resultText ?? ""}
-        pending={!result}
+        pending={!result || result.isPartial === true}
         isError={isError}
         duration={duration}
         local={normalizedToolName.includes("(local)")}

@@ -25,6 +25,8 @@ import type { ModelRoleAssignment } from "@/lib/api-types";
 import { planModeTransitionErrorMessage, planSlashCommandIntent, planSlashCommandOutcome, type WebPlanModeInfo } from "@/lib/plan-mode-web";
 import { appendBtwDelta, latestBtwTurn, mergeBtwRecords, type BtwRecord } from "@/lib/btw-web";
 import { formatGoalDetails, parseGoalSlashCommand, shouldNotifyGoalCompletion, webGoalInfo, type WebGoalInfo, type WebGoalOp } from "@/lib/goal-web";
+import { mergeToolStreamUpdate, sessionEventEffect } from "@/lib/session-events";
+import type { ToolResultMessage } from "@/lib/types";
 
 export interface SessionData {
   sessionId: string;
@@ -429,6 +431,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     onRequestNewSession, onOpenSettings,
   } = opts;
 
+  const [toolStreamResults, setToolStreamResults] = useState<ReadonlyMap<string, ToolResultMessage>>(new Map());
+  const [todoReminder, setTodoReminder] = useState<unknown[]>([]);
   const isNew = session === null && newSessionCwd !== null;
 
   const [data, setData] = useState<SessionData | null>(null);
@@ -1320,6 +1324,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [agentRunning]);
 
   const handleAgentEvent = useCallback((event: AgentEvent) => {
+    const effect = sessionEventEffect(event);
+    if (effect?.thinkingLevel !== undefined) setThinkingLevel(effect.thinkingLevel as ThinkingLevelOption);
+    if (effect?.model !== undefined) setCurrentModelOverride(effect.model);
+    if (effect?.isCompacting !== undefined) setIsCompacting(effect.isCompacting);
+    if (effect?.todos !== undefined) setTodoReminder(effect.todos);
+    for (const notice of effect?.notices ?? []) {
+      addNotice({ type: notice.type, message: notice.message ?? t(notice.key!, notice.values) });
+    }
+    if (effect?.ircMessage) {
+      const content = effect.ircMessage.content;
+      addNotice({ type: "info", message: t("events.irc", { message: typeof content === "string" ? content : content.filter((block) => block.type === "text").map((block) => block.text).join("\n") }) });
+    }
     switch (event.type) {
       case "btw_record": {
         const record = event.record as BtwRecord;
@@ -1336,6 +1352,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (event.source === "btw-history") addNotice({ type: "error", message: event.message as string });
         break;
       case "agent_start":
+        setToolStreamResults(new Map());
         cancelEventStreamGrace();
         sdkAgentActiveRef.current = true;
         agentRunningRef.current = true;
@@ -1505,6 +1522,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setAgentPhase({ kind: "waiting_model" });
         break;
       }
+      case "tool_stream_update":
+      case "tool_execution_update":
+        if (agentRunningRef.current) setToolStreamResults((current) => mergeToolStreamUpdate(current, event));
+        break;
       case "tool_execution_start": {
         const id = event.toolCallId as string;
         const name = event.toolName as string;
@@ -1516,6 +1537,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         break;
       }
       case "tool_execution_end": {
+        setToolStreamResults((current) => mergeToolStreamUpdate(current, event));
         const id = event.toolCallId as string;
         setAgentPhase((prev) => {
           if (prev?.kind !== "running_tools") return prev;
@@ -1621,18 +1643,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         break;
       case "auto_compaction_start":
       case "compaction_start":
-        setIsCompacting(true);
+      case "manual_compaction_start":
         setCompactError(null);
         setCompactResult(null);
         break;
       case "auto_compaction_end":
       case "compaction_end":
-        setIsCompacting(false);
+      case "manual_compaction_end":
         if (event.errorMessage) {
           setCompactError(event.errorMessage as string);
           setCompactResult(null);
         } else if (!event.aborted) {
-          setCompactResult(readCompactResult(event.result, (event.reason as string | undefined) ?? "auto"));
+          setCompactResult(readCompactResult(event.result, event.type === "manual_compaction_end" ? "manual" : (event.reason as string | undefined) ?? "auto"));
           const sid = sessionIdRef.current;
           if (sid) {
             void loadSession(sid);
@@ -1643,8 +1665,22 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       case "extension_ui_request":
         handleExtensionUiRequest(event as ExtensionUiRequest);
         break;
+      case "notice":
+      case "thinking_level_changed":
+      case "model_changed":
+      case "retry_fallback_applied":
+      case "retry_fallback_succeeded":
+      case "ttsr_triggered":
+      case "advisor_cost_changed":
+      case "advisor_yielded":
+      case "irc_message":
+      case "todo_reminder":
+      case "todo_auto_clear":
+      case "config_warnings_changed":
+        // Pure event projections above apply the SDK's display/state effects.
+        break;
     }
-  }, [addNotice, cancelEventStreamGrace, confirmPrompt, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, onSessionRenamed, refreshContextUsage, refreshGoalAfterTurn, restoreRejectedPrompt, scheduleEventStreamClose, settleUiStage]);
+  }, [addNotice, t, cancelEventStreamGrace, confirmPrompt, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, onSessionRenamed, refreshContextUsage, refreshGoalAfterTurn, restoreRejectedPrompt, scheduleEventStreamClose, settleUiStage]);
   handleAgentEventRef.current = handleAgentEvent;
 
   // A send path that failed before the server accepted the submission must
@@ -2637,6 +2673,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   return {
     // State
     data, loading, error, activeLeafId, messages, entryIds, streamState,
+    toolStreamResults, todoReminder,
     agentRunning, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, modelRoles, newSessionModel, toolPreset, thinkingLevel,
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, modelSwitching, sessionStats,

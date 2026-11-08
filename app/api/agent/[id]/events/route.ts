@@ -3,10 +3,10 @@ import { getRpcSession, startRpcSession, type AgentEvent } from "@/lib/rpc-manag
 import { isApiRequestAllowed } from "@/lib/request-security";
 import { requireVisibleSession } from "@/lib/web-session-guard";
 
-const OMITTED_EVENT_TYPES = new Set(["turn_start", "turn_end", "tool_execution_update"]);
+const OMITTED_EVENT_TYPES: Record<string, true> = { turn_start: true, turn_end: true };
 
 function toClientEvent(event: AgentEvent): AgentEvent | null {
-  if (OMITTED_EVENT_TYPES.has(event.type)) return null;
+  if (Object.hasOwn(OMITTED_EVENT_TYPES, event.type)) return null;
   if (event.type === "message_update") {
     const clientEvent = { ...event };
     delete clientEvent.assistantMessageEvent;

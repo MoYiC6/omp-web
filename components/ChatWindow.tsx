@@ -236,6 +236,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
 
   const {
     loading, error, messages, entryIds, streamState,
+    toolStreamResults, todoReminder,
     agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, modelRoles, toolPreset, thinkingLevel,
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, modelSwitching, sessionStats,
@@ -366,14 +367,15 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
   // skip re-rendering on every message_update event. An inline `new Map()`
   // here used to defeat MessageView's memo() on each streamed chunk.
   const toolResultsMap = useMemo(() => {
-    const map = new Map<string, ToolResultMessage>();
+    const live = toolStreamResults;
+    const map = new Map<string, ToolResultMessage>(live);
     for (const msg of messages) {
       if (msg.role === "toolResult") {
         map.set((msg as ToolResultMessage).toolCallId, msg as ToolResultMessage);
       }
     }
     return map;
-  }, [messages]);
+  }, [messages, toolStreamResults]);
   const inputHistory = useMemo(() => {
     const seen = new Set<string>();
     const history: string[] = [];
@@ -769,8 +771,11 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
                 </>
               );
             })()}
+            {todoReminder.length > 0 && (
+              <MessageView message={{ role: "custom", customType: "todo_reminder", content: "", display: true, details: { phases: [{ name: t("message.todo"), tasks: todoReminder }] } }} />
+            )}
             {streamState.isStreaming && streamState.streamingMessage && (
-              <MessageView message={streamState.streamingMessage as AgentMessage} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} onOpenInternalUrl={onOpenInternalUrl} />
+              <MessageView message={streamState.streamingMessage as AgentMessage} isStreaming toolResults={toolResultsMap} modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} onOpenInternalUrl={onOpenInternalUrl} />
             )}
 
             {agentRunning && !streamState.streamingMessage && agentPhase && (

@@ -177,6 +177,8 @@ export interface AgentSessionLike {
   readonly extensionRunner: ExtensionRunnerLike | undefined;
   readonly promptTemplates: readonly PromptTemplateLike[];
   readonly skills: readonly SkillLike[];
+  readonly configWarnings?: readonly string[];
+  getAdvisorCost?(): number;
 
   reload(): Promise<void>;
   refreshSkills?(): Promise<void>;

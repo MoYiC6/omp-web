@@ -404,7 +404,14 @@ export class AgentSessionWrapper {
       // Before anything reads running state: a continuation decided at this
       // agent_end must already count as pending (RPC mode orders it the same).
       this.goal.observe(rawEvent as never);
-      const event = rawEvent as unknown as AgentEvent;
+      // SDK invalidations have no payload: capture the corresponding state at emission.
+      const event: AgentEvent = rawEvent.type === "model_changed"
+        ? { ...rawEvent, model: this.inner.model ? { provider: this.inner.model.provider, modelId: this.inner.model.id } : null }
+        : rawEvent.type === "config_warnings_changed"
+          ? { ...rawEvent, warnings: [...(this.inner.configWarnings ?? [])] }
+          : rawEvent.type === "advisor_cost_changed"
+            ? { ...rawEvent, cost: this.inner.getAdvisorCost?.() }
+            : rawEvent as unknown as AgentEvent;
       if (event.type === "agent_end") {
         invalidateSessionListCache();
       }

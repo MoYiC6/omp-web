@@ -82,6 +82,8 @@ export interface ToolResultMessage {
   toolName?: string;
   content: (TextContent | ImageContent)[];
   isError?: boolean;
+  /** A live preview; the terminal tool result replaces it. */
+  isPartial?: boolean;
   details?: unknown;
   timestamp?: number;
 }
