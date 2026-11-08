@@ -20,6 +20,7 @@ import {
   RpcSubagentRegistry,
 } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-subagents";
 import type { RpcGoalController } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-goal";
+import { RpcBtwController } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-btw";
 import { KeybindingsManager as TuiKeybindingsManager, TUI_KEYBINDINGS } from "@oh-my-pi/pi-tui";
 import { randomUUID } from "crypto";
 import { existsSync, realpathSync, statSync, writeFileSync } from "fs";
@@ -253,12 +254,14 @@ export class AgentSessionWrapper {
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private onDestroyCallback: (() => void) | null = null;
   private shutdownPromise: Promise<void> | null = null;
+  private destructionPromise: Promise<void> | null = null;
   private readonly subagents: RpcSubagentRegistry;
   // The SDK registry removes terminal entries after emitting their lifecycle frame.
   // Keep a bounded per-session copy so state requests can still expose history.
   private readonly subagentHistory = new Map<string, SubagentSnapshot>();
   // Goal mode lifecycle, shared with `omp --mode rpc` (see lib/goal-session.ts).
   private readonly goal: RpcGoalController;
+  private readonly btw: RpcBtwController;
   // Reattaching a journaled goal changes the tool set: commands wait for it.
   private goalReady: Promise<void> = Promise.resolve();
   private _alive = true;
@@ -276,6 +279,10 @@ export class AgentSessionWrapper {
     });
     this.subagents.setSubscriptionLevel("progress");
     this.goal = createWebGoalController(inner as never, () => notifyRunningChange());
+    this.btw = new RpcBtwController(inner as never, (frame) => {
+      this.emit(frame as unknown as AgentEvent);
+      this.resetIdleTimer();
+    });
   }
 
   private rememberSubagentSnapshot(snapshot: SubagentSnapshot): void {
@@ -702,6 +709,13 @@ export class AgentSessionWrapper {
     }
 
     switch (type) {
+      case "btw":
+        return { record: await this.btw.ask(command.question as string, command.recordId as string | undefined) };
+      case "btw_cancel":
+        return { cancelled: this.btw.cancel(command.recordId as string | undefined) };
+      case "get_btw_history":
+        return { records: await this.btw.history() };
+
       case "prompt": {
         if (this.inner.isBashRunning) {
           throw new Error("Cannot send a prompt while a shell command is running");
@@ -840,6 +854,7 @@ export class AgentSessionWrapper {
 
         const entry = sessionManager.getEntry(entryId);
         if (!entry) throw new Error("Invalid entry ID for forking");
+        await this.btw.close();
 
         const sessionDir = sessionManager.getSessionDir();
         let newSessionFile: string;
@@ -869,6 +884,7 @@ export class AgentSessionWrapper {
         if (this.inner.isBashRunning) {
           throw new Error("Cannot navigate while a shell command is running");
         }
+        await this.btw.close();
         // A goal continuation waiting to start is held until the navigation
         // ends, then resumes in the same session (RPC mode's navigate_tree).
         await this.goal.beginSessionChange();
@@ -1180,10 +1196,12 @@ export class AgentSessionWrapper {
     });
   }
 
-  destroy(): void {
-    if (!this._alive) return;
+  destroy(): Promise<void> {
+    if (this.destructionPromise) return this.destructionPromise;
+    if (!this._alive) return Promise.resolve();
+    // Detach synchronously: no request may reuse a wrapper being destroyed.
     this._alive = false;
-    if (this.idleTimer) clearTimeout(this.idleTimer);
+    clearTimeout(this.idleTimer ?? undefined);
     if (this.inner.isBashRunning) this.inner.abortBash();
     this.unsubscribe?.();
     this.subagents.dispose();
@@ -1193,14 +1211,23 @@ export class AgentSessionWrapper {
     this.pendingUiResponses.clear();
     this.pendingUiRequests.clear();
     try {
-      void this.inner.dispose?.();
+      this.onDestroyCallback?.();
     } finally {
-      try {
-        this.onDestroyCallback?.();
-      } finally {
-        notifyRunningChange();
-      }
+      notifyRunningChange();
     }
+    this.destructionPromise = (async () => {
+      try {
+        await this.btw.close();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error("[omp-web] failed to close side questions:", message);
+        this.emit({ type: "notice", level: "error", source: "btw-history", message });
+      }
+      await this.inner.dispose?.();
+    })().catch((error) => {
+      console.error("[omp-web] failed to dispose session:", error);
+    });
+    return this.destructionPromise;
   }
 
   async shutdown(): Promise<void> {
@@ -1219,7 +1246,7 @@ export class AgentSessionWrapper {
         }
         await this.inner.extensionRunner?.emit?.({ type: "session_shutdown", reason: "quit" });
       } finally {
-        this.destroy();
+        await this.destroy();
       }
     })();
     return this.shutdownPromise;

@@ -22,6 +22,7 @@ import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-fi
 import { MessageView } from "./MessageView";
 import { MarkdownBody } from "./MarkdownBody";
 import { ChatInput, resolveImageMimeType, type ChatInputHandle } from "./ChatInput";
+import { BtwPanel } from "./BtwPanel";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
 import { OmpWordmark } from "./OmpWordmark";
 import { useI18n } from "@/hooks/useI18n";
@@ -238,6 +239,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, modelSwitching, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages, subagents, planMode, goal,
+    btwRecords, btwVisible, askBtw, cancelBtw,
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection,
     agentPhase,
@@ -573,6 +575,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
               </div>
             </div>
             <NoticeShelf notices={notices} align="right" />
+            {btwVisible && <BtwPanel records={btwRecords} onAsk={askBtw} onCancel={cancelBtw} />}
             {chatInputElement}
           </div>
         </div>
@@ -790,6 +793,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
               />
             )}
 
+            {btwVisible && <BtwPanel records={btwRecords} onAsk={askBtw} onCancel={cancelBtw} />}
 
             <div ref={messagesEndRef} />
             </div>

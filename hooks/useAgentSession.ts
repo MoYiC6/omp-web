@@ -23,6 +23,7 @@ import type { ContextUsage, SessionStatsInfo, SlashCommandInfo } from "@/lib/omp
 import type { ModelRoleAssignment } from "@/lib/api-types";
 import { planModeTransitionErrorMessage, planSlashCommandIntent, planSlashCommandOutcome, type WebPlanModeInfo } from "@/lib/plan-mode-web";
 import { formatGoalDetails, parseGoalSlashCommand, webGoalInfo, type WebGoalInfo, type WebGoalOp } from "@/lib/goal-web";
+import { appendBtwDelta, latestBtwTurn, mergeBtwRecords, type BtwRecord } from "@/lib/btw-web";
 
 export interface SessionData {
   sessionId: string;
@@ -472,6 +473,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [subagents, setSubagents] = useState<SubagentSnapshot[]>([]);
   const [planMode, setPlanMode] = useState<WebPlanModeInfo | null>(null);
   const [goal, setGoal] = useState<WebGoalInfo | null>(null);
+  const [btwRecords, setBtwRecords] = useState<BtwRecord[]>([]);
+  const [btwVisible, setBtwVisible] = useState(false);
+  const btwRunningRef = useRef(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const eventSourceSessionIdRef = useRef<string | null>(null);
   const eventConnectionAttemptRef = useRef<EventStreamConnectionAttempt | null>(null);
@@ -830,7 +834,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           // auto-reconnect. Settle the Promise and manually reconnect for
           // already-running sessions or an active idle grace window.
           settle("closed");
-          if (eventSourceRef.current === es && (agentRunningRef.current || eventStreamGraceActiveRef.current)) {
+          if (eventSourceRef.current === es && (agentRunningRef.current || btwRunningRef.current || eventStreamGraceActiveRef.current)) {
             eventSourceRef.current = null;
             eventSourceSessionIdRef.current = null;
             eventConnectionAttemptRef.current = null;
@@ -839,7 +843,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               if (
                 reconnectGeneration === eventStreamGraceGenerationRef.current
                 && !eventSourceRef.current
-                && (agentRunningRef.current || eventStreamGraceActiveRef.current)
+                && (agentRunningRef.current || btwRunningRef.current || eventStreamGraceActiveRef.current)
               ) {
                 void connectEvents(sid);
               }
@@ -1068,6 +1072,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           || !eventStreamGraceActiveRef.current
         ) return;
 
+        if (btwRunningRef.current) {
+          eventStreamGraceTimerRef.current = setTimeout(() => void checkServerIdle(), CONTEXT_USAGE_REFRESH_MS);
+          return;
+        }
         const state = data.state;
         setSubagents((current) => mergeSubagentSnapshots(current, state?.subagents ?? []));
         const promptActive = Boolean(data.running && state && (state.isStreaming || state.isPromptRunning));
@@ -1289,6 +1297,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const handleAgentEvent = useCallback((event: AgentEvent) => {
     switch (event.type) {
+      case "btw_record": {
+        const record = event.record as BtwRecord;
+        btwRunningRef.current = latestBtwTurn(record).status === "running";
+        setBtwRecords((current) => mergeBtwRecords(current, [record]));
+        setBtwVisible(true);
+        if (!btwRunningRef.current && sessionIdRef.current) scheduleEventStreamClose(sessionIdRef.current);
+        break;
+      }
+      case "btw_delta":
+        setBtwRecords((current) => appendBtwDelta(current, event.recordId as string, event.delta as string));
+        break;
+      case "notice":
+        if (event.source === "btw-history") addNotice({ type: "error", message: event.message as string });
+        break;
       case "agent_start":
         cancelEventStreamGrace();
         sdkAgentActiveRef.current = true;
@@ -2014,6 +2036,38 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [addNotice, ensureNewSession]);
 
+  const loadBtwHistory = useCallback(async (sid: string) => {
+    // Subscribe before reading, so a completion during the request cannot be lost.
+    await ensureEventsConnected(sid);
+    const result = await sendAgentCommand<{ records: BtwRecord[] }>(sid, { type: "get_btw_history" });
+    if (sessionIdRef.current !== sid) return;
+    setBtwRecords((current) => {
+      const merged = mergeBtwRecords(current, result.records);
+      btwRunningRef.current = merged.some((record) => latestBtwTurn(record).status === "running");
+      return merged;
+    });
+    if (result.records.length > 0) setBtwVisible(true);
+  }, [ensureEventsConnected]);
+
+  const askBtw = useCallback(async (question: string, recordId?: string) => {
+    const sid = sessionIdRef.current ?? await ensureNewSession();
+    if (!sid) throw new Error("No active session");
+    cancelEventStreamGrace();
+    await ensureEventsConnected(sid);
+    const result = await sendAgentCommand<{ record: BtwRecord }>(sid, { type: "btw", question, ...(recordId ? { recordId } : {}) });
+    if (sessionIdRef.current !== sid) return;
+    setBtwRecords((current) => mergeBtwRecords(current, [result.record]));
+    setBtwVisible(true);
+    promoteNewSession();
+  }, [cancelEventStreamGrace, ensureEventsConnected, ensureNewSession, promoteNewSession]);
+
+  const cancelBtw = useCallback(async (recordId: string) => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    await sendAgentCommand(sid, { type: "btw_cancel", recordId });
+    await loadBtwHistory(sid);
+  }, [loadBtwHistory]);
+
 
   const runGoalCommand = useCallback(async (
     sid: string,
@@ -2073,6 +2127,17 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
     try {
       switch (commandName) {
+        case "btw": {
+          if (!sid) return complete({ handled: true, error: "No active session" });
+          if (args) await askBtw(args);
+          else {
+            await loadBtwHistory(sid);
+            setBtwVisible(true);
+            promoteNewSession();
+          }
+          return { handled: true };
+        }
+
         case "compact": {
           if (!sid || isCompacting) return complete({ handled: true, error: "No active session to compact" });
           setIsCompacting(true);
@@ -2221,7 +2286,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       if (commandName === "compact") setIsCompacting(false);
     }
-  }, [addNotice, appendCommandOutput, ensureNewSession, handleSetPlanMode, isCompacting, loadModels, loadSession, loadSlashCommands, loadTools, planMode, promoteNewSession, onSessionStatsPanelOpen, onRequestNewSession, onOpenSettings, performGoalAction, runGoalCommand]);
+  }, [addNotice, appendCommandOutput, ensureNewSession, handleSetPlanMode, isCompacting, loadModels, loadSession, loadSlashCommands, loadTools, planMode, promoteNewSession, onSessionStatsPanelOpen, onRequestNewSession, onOpenSettings, performGoalAction, runGoalCommand, askBtw, loadBtwHistory]);
 
   // Queued (undelivered) messages live in the queue panel only; the chat gets
   // the real user message when pi delivers it (user message_end event). An
@@ -2390,6 +2455,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   useEffect(() => {
     if (session) {
       sessionIdRef.current = session.id;
+      void loadBtwHistory(session.id).catch((error) => {
+        addNotice({ type: "error", message: error instanceof Error ? error.message : String(error) });
+      });
       loadSession(session.id, true, true).then((agentState) => {
         if (agentState?.running) {
           loadTools(session.id);
@@ -2534,6 +2602,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, modelSwitching, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages, subagents, planMode, goal,
+    btwRecords, btwVisible, askBtw, cancelBtw,
     notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,
