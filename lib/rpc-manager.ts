@@ -42,6 +42,11 @@ import {
 } from "./plan-mode-web";
 import { createWebGoalController, isGoalModeAvailable, renderGuidedGoalKickoff, webGoalInfoForSession } from "./goal-session";
 import type { WebGoalOp } from "./goal-web";
+import { WebLoopController } from "./loop-session";
+import { TanCommandController } from "@oh-my-pi/pi-coding-agent/modes/controllers/tan-command-controller";
+import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
+import type { CreateAgentSessionResult } from "@oh-my-pi/pi-coding-agent/sdk";
+import type { AgentSession } from "@oh-my-pi/pi-coding-agent";
 import { PRESET_FULL } from "./tool-presets";
 import { persistExplicitStartupPreferences } from "./startup-preferences";
 import { generateSessionTitle, shouldAutoGenerateTitle } from "./session-title";
@@ -264,11 +269,15 @@ export class AgentSessionWrapper {
   private readonly btw: RpcBtwController;
   // Reattaching a journaled goal changes the tool set: commands wait for it.
   private goalReady: Promise<void> = Promise.resolve();
+  private readonly loop: WebLoopController;
+  private readonly tan: TanCommandController;
+  private unsubscribeTanJobs?: () => void;
   private _alive = true;
 
   constructor(
     public readonly inner: AgentSessionLike,
     eventBus: ConstructorParameters<typeof RpcSubagentRegistry>[0],
+    mcpManager?: CreateAgentSessionResult["mcpManager"],
   ) {
     this.subagents = new RpcSubagentRegistry(eventBus, (frame) => {
       const event = frame as unknown as AgentEvent;
@@ -283,6 +292,25 @@ export class AgentSessionWrapper {
       this.emit(frame as unknown as AgentEvent);
       this.resetIdleTimer();
     });
+    this.loop = new WebLoopController({
+      busy: () => this.promptRunning || inner.isStreaming || inner.isCompacting || !!inner.hasPostPromptWork,
+      submit: (message) => this.send({ type: "prompt", message, loopAutomatic: true }),
+      changed: (state) => {
+        this.emit({ type: "loop_updated", state });
+        notifyRunningChange();
+      },
+      conditionOptions: () => ({ cwd: this.cwd, sessionId: inner.sessionId, timeoutMs: getOmpSetting<number>(inner.settings, "loop.conditionTimeoutMs") }),
+    });
+    // This SDK controller touches no terminal widgets: its UI seams are just
+    // status/error callbacks and a transcript refresh. Keep the full fork,
+    // MCP follower, async job registration and completion delivery in the SDK.
+    this.tan = new TanCommandController({
+      session: inner, sessionManager: inner.sessionManager, settings: inner.settings, mcpManager,
+      showStatus: (message: string) => this.emit({ type: "extension_ui_request", method: "notify", message, notifyType: "info" }),
+      showError: (message: string) => { throw new Error(message); },
+      rebuildChatFromMessages: () => this.emit({ type: "session_refresh" }),
+    } as unknown as InteractiveModeContext);
+    this.unsubscribeTanJobs = (inner as unknown as AgentSession).asyncJobManager?.onJobSettled(() => this.syncTanJobs());
   }
 
   private rememberSubagentSnapshot(snapshot: SubagentSnapshot): void {
@@ -347,7 +375,33 @@ export class AgentSessionWrapper {
     });
   }
 
+  private syncTanJobs(): void {
+    const session = this.inner as unknown as AgentSession;
+    const manager = session.asyncJobManager;
+    if (!manager) return;
+    for (const job of manager.getAllJobs({ ownerId: session.getAgentId() })) {
+      if (!job.agentId?.startsWith("Tan-") || !this.inner.sessionFile) continue;
+      const previous = this.subagentHistory.get(job.agentId);
+      const status = job.status === "cancelled" ? "aborted" : job.status;
+      const snapshot: SubagentSnapshot = {
+        id: job.agentId, index: previous?.index ?? this.subagentHistory.size,
+        agent: "tan", agentSource: "bundled", description: job.label,
+        task: job.label.replace(/^\/tan\s*/, ""), status,
+        sessionFile: resolve(this.inner.sessionFile.slice(0, -6), `${job.agentId}.jsonl`),
+        lastUpdate: job.endTime ?? job.startTime,
+      };
+      this.rememberSubagentSnapshot(snapshot);
+      if (previous?.status === status) continue;
+      this.emit({ type: "subagent_lifecycle", payload: { ...snapshot, status: status === "running" ? "started" : status } });
+      if (status !== "running") {
+        this.emit({ type: "tan_result", id: job.agentId, status, text: job.resultText ?? job.errorText ?? "" });
+      }
+      notifyRunningChange();
+    }
+  }
+
   private getSubagentSnapshots(): SubagentSnapshot[] {
+    this.syncTanJobs();
     for (const live of this.subagents.getSubagents()) {
       const snapshot = live as unknown as SubagentSnapshot;
       this.rememberSubagentSnapshot(snapshot);
@@ -391,6 +445,8 @@ export class AgentSessionWrapper {
       || this.subagents.getSubagents().length > 0
       // A goal continuation decided at a yield but not yet admitted.
       || this.goal.continuationPending
+      || this.loop.pending
+      || [...this.subagentHistory.values()].some((entry) => entry.agent === "tan" && entry.status === "running")
     );
   }
   bindToolUiContext(setter: (uiContext: ExtensionUiContextLike, hasUI: boolean) => void): void {
@@ -404,6 +460,7 @@ export class AgentSessionWrapper {
       // Before anything reads running state: a continuation decided at this
       // agent_end must already count as pending (RPC mode orders it the same).
       this.goal.observe(rawEvent as never);
+      if (this.loop.info.enabled) this.goal.stopForHostAbort();
       // SDK invalidations have no payload: capture the corresponding state at emission.
       const event: AgentEvent = rawEvent.type === "model_changed"
         ? { ...rawEvent, model: this.inner.model ? { provider: this.inner.model.provider, modelId: this.inner.model.id } : null }
@@ -417,6 +474,7 @@ export class AgentSessionWrapper {
       }
       if (IDLE_RESET_EVENT_TYPES.has(event.type)) this.resetIdleTimer();
       this.emit(event);
+      if (event.type === "agent_settled") this.loop.settled();
       if (RUNNING_STATE_EVENT_TYPES.has(event.type)) notifyRunningChange();
     });
     // Restore a goal journaled in this session (by the TUI or an earlier
@@ -738,6 +796,7 @@ export class AgentSessionWrapper {
           ...(promptId ? { promptId } : {}),
           ...(streamingBehavior ? { streamingBehavior } : {}),
         };
+        if (!command.loopAutomatic && !streamingBehavior) this.loop.capture(command.message as string);
         this.promptRunning = true;
         notifyRunningChange();
         this.inner.prompt(command.message as string, {
@@ -750,8 +809,10 @@ export class AgentSessionWrapper {
           this.emit({ type: "prompt_done", ...promptEvent });
           if (!streamingBehavior) void this.maybeAutoGenerateTitle(command.message as string);
           notifyRunningChange();
+          if (!streamingBehavior) this.loop.settled();
         }).catch((error) => {
           this.promptRunning = false;
+          this.loop.pause();
           this.resetIdleTimer();
           invalidateSessionListCache();
           this.emit({
@@ -769,6 +830,7 @@ export class AgentSessionWrapper {
         // Before the abort starts, so the aborted turn's own agent_end cannot
         // schedule another goal turn (the SDK pauses the interrupted goal).
         this.goal.stopForHostAbort();
+        this.loop.pause();
         await this.withFinalRunningNotification(() => this.inner.abort());
         return null;
 
@@ -806,6 +868,7 @@ export class AgentSessionWrapper {
           subagents: this.getSubagentSnapshots(),
           planMode: webPlanModeInfo(this.inner, getOmpSetting<boolean>(this.inner.settings, "plan.enabled")),
           goal: webGoalInfoForSession(this.inner as never),
+          loop: this.loop.info,
         };
       }
       case "get_subagents":
@@ -817,6 +880,10 @@ export class AgentSessionWrapper {
           sessionFile?: string;
           fromByte?: number;
         };
+        const tanSnapshot = this.getSubagentSnapshots().find((entry) => entry.agent === "tan" && (
+          (selector.subagentId && entry.id === selector.subagentId) || (selector.sessionFile && entry.sessionFile === selector.sessionFile)
+        ));
+        if (tanSnapshot?.sessionFile) return readRpcSubagentTranscript(tanSnapshot.sessionFile, selector.fromByte);
         const transcriptFile = this.subagents.resolveSessionFile(selector);
         return readRpcSubagentTranscript(transcriptFile, selector.fromByte);
       }
@@ -1014,6 +1081,34 @@ export class AgentSessionWrapper {
       }
       case "execute_slash_command": {
         const output: string[] = [];
+        const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(command.message as string);
+        const args = match?.[2]?.trim() ?? "";
+        if (match?.[1] === "loop") {
+          const prompt = this.loop.toggle(args);
+          this.goal.stopForHostAbort();
+          if (prompt) {
+            this.loop.capture(prompt);
+            await this.send({ type: "prompt", message: prompt, loopAutomatic: true,
+              ...(this.inner.isStreaming || this.promptRunning || this.inner.isCompacting ? { streamingBehavior: "followUp" } : {}),
+            });
+          }
+          return { handled: true, output, loop: this.loop.info };
+        }
+        if (match?.[1] === "queue") {
+          if (!args) throw new Error("Usage: /queue <message>");
+          if (this.inner.isStreaming || this.promptRunning || this.inner.isCompacting || this.inner.queuedMessageCount > 0) {
+            await this.inner.followUp(args);
+          } else {
+            await this.send({ type: "prompt", message: args });
+          }
+          return { handled: true, output };
+        }
+        if (match?.[1] === "tan") {
+          if (!args) throw new Error("Usage: /tan <work>");
+          await this.tan.start(args);
+          this.syncTanJobs();
+          return { handled: true, output };
+        }
         const result: AcpBuiltinSlashCommandResult = await executeAcpBuiltinSlashCommand(command.message as string, {
           session: this.inner as never,
           sessionManager: this.inner.sessionManager,
@@ -1209,6 +1304,8 @@ export class AgentSessionWrapper {
     // Detach synchronously: no request may reuse a wrapper being destroyed.
     this._alive = false;
     clearTimeout(this.idleTimer ?? undefined);
+    this.loop.dispose();
+    this.unsubscribeTanJobs?.();
     if (this.inner.isBashRunning) this.inner.abortBash();
     this.unsubscribe?.();
     this.subagents.dispose();
@@ -1963,7 +2060,7 @@ export async function startRpcSession(
       // reloaded after an idle teardown keeps the same identity and any pending
       // delivery still reaches it.
       ensureAsyncJobManager(Math.min(100, Math.max(1, getOmpSetting<number | undefined>(settings, "async.maxJobs") ?? 100)));
-      const { session: inner, eventBus, setToolUIContext } = await createAgentSession({
+      const { session: inner, eventBus, setToolUIContext, mcpManager } = await createAgentSession({
         cwd: sessionCwd,
         agentDir,
         settings,
@@ -2003,7 +2100,7 @@ export async function startRpcSession(
         await session.setActiveToolsByName(withExtensionTools(session, toolNames));
       }
 
-      const wrapper = new AgentSessionWrapper(session, eventBus);
+      const wrapper = new AgentSessionWrapper(session, eventBus, mcpManager);
       wrapper.bindToolUiContext(
         setToolUIContext as unknown as (uiContext: ExtensionUiContextLike, hasUI: boolean) => void,
       );

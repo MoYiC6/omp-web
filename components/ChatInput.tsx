@@ -34,6 +34,7 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
 import { PRESET_DEFAULT, PRESET_FULL } from "@/lib/tool-presets";
 import { formatGoalDuration, parseGoalBudget, type WebGoalInfo, type WebGoalStatus } from "@/lib/goal-web";
+import type { WebLoopInfo } from "@/lib/loop-web";
 
 export interface AttachedImage {
   data: string;   // base64, no prefix
@@ -96,6 +97,8 @@ interface Props {
   /** Goal mode state and controls; the bar shows only while a goal exists. */
   goal?: WebGoalInfo | null;
   onGoalAction?: (action: GoalAction) => void;
+  loop?: WebLoopInfo | null;
+  onDisableLoop?: () => void;
   soundEnabled?: boolean;
   onSoundToggle?: () => void;
   onAudioUnlock?: () => void;
@@ -481,7 +484,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   retryInfo, queuedMessages, inputHistory = [], onRecallQueue,
   slashCommands, slashCommandsLoading, onLoadSlashCommands,
   onBuiltinCommand,
-  planMode, onSetPlanMode, goal, onGoalAction,
+  planMode, onSetPlanMode, goal, onGoalAction, loop, onDisableLoop,
   soundEnabled, onSoundToggle, onAudioUnlock,
   onPromptWithStreamingBehavior,
   draftKey,
@@ -2412,6 +2415,18 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             </span>
           )}
           {goal?.goal && <GoalStatusBar info={goal} onAction={onGoalAction} t={t} />}
+          {loop?.enabled && (
+            <span role="status" style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap", minWidth: 0, fontSize: 11, color: "var(--text-muted)" }}>
+              <span style={{ padding: "3px 10px", border: "1px solid var(--border)", borderRadius: 999, color: "var(--success)", fontWeight: 600 }}>
+                {t("chat.loop")} · {t(`chat.loopStatus.${loop.status}`)}
+              </span>
+              <span>{t("chat.loopIterations", { count: loop.iterations })}</span>
+              {loop.limit?.kind === "iterations" && <span>{t("chat.loopRemaining", { count: loop.limit.remaining })}</span>}
+              {loop.limit?.kind === "duration" && <span>{formatGoalDuration(loop.limit.durationMs / 1000)}</span>}
+              {loop.condition && <span style={{ overflowWrap: "anywhere" }}>{loop.condition.until ? "--until" : "--while"} {loop.condition.command}</span>}
+              <button type="button" onClick={onDisableLoop} style={{ padding: "2px 8px", border: "1px solid var(--border)", borderRadius: 999, background: "none", color: "var(--text-muted)", fontSize: 11, cursor: "pointer" }}>{t("chat.loopDisable")}</button>
+            </span>
+          )}
         </div>
 
         {/* Bash mode status label */}

@@ -27,6 +27,7 @@ import { appendBtwDelta, latestBtwTurn, mergeBtwRecords, type BtwRecord } from "
 import { formatGoalDetails, parseGoalSlashCommand, shouldNotifyGoalCompletion, webGoalInfo, type WebGoalInfo, type WebGoalOp } from "@/lib/goal-web";
 import { mergeToolStreamUpdate, sessionEventEffect } from "@/lib/session-events";
 import type { ToolResultMessage } from "@/lib/types";
+import type { WebLoopInfo } from "@/lib/loop-web";
 
 export interface SessionData {
   sessionId: string;
@@ -98,6 +99,7 @@ type AgentStateResponse = {
   subagents?: SubagentSnapshot[];
   planMode?: WebPlanModeInfo | null;
   goal?: WebGoalInfo | null;
+  loop?: WebLoopInfo;
 };
 
 export interface QueuedMessages {
@@ -485,6 +487,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [goalDialogOpen, setGoalDialogOpen] = useState(false);
   const completedGoalRef = useRef<WebGoalInfo | null>(null);
   const notifiedGoalIdRef = useRef<string | null>(null);
+  const [loop, setLoop] = useState<WebLoopInfo | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const eventSourceSessionIdRef = useRef<string | null>(null);
   const eventConnectionAttemptRef = useRef<EventStreamConnectionAttempt | null>(null);
@@ -594,6 +597,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setContextUsage(d.contextUsage ?? null);
       setPlanMode(d.planMode ?? null);
       setGoal(d.goal ?? null);
+      setLoop(null);
       setMessages(d.context.messages);
       setEntryIds(d.context.entryIds ?? []);
       setPlanMode(d.planMode ?? null);
@@ -622,6 +626,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (liveState.extensionWidgets !== undefined) setExtensionWidgets(liveState.extensionWidgets ?? []);
           if (liveState.planMode !== undefined) setPlanMode(liveState.planMode ?? null);
           if (liveState.goal !== undefined) setGoal(liveState.goal ?? null);
+          if (liveState.loop !== undefined) setLoop(liveState.loop);
           if (liveState.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(liveState.queuedMessages));
           if (liveState.subagents !== undefined) setSubagents((current) => mergeSubagentSnapshots(current, liveState.subagents ?? []));
         } else if (!agentState.running) {
@@ -1249,6 +1254,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setSubagents((current) => mergeSubagentSnapshots(current, state?.subagents ?? []));
       if (state?.planMode !== undefined) setPlanMode(state.planMode ?? null);
       if (state?.goal !== undefined) setGoal(state.goal ?? null);
+      if (state?.loop !== undefined) setLoop(state.loop);
       const busy = data.running && state
         && (state.isStreaming || state.isPromptRunning || state.isCompacting);
       if (busy || !agentRunningRef.current) return;
@@ -1380,6 +1386,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               if (d.state?.subagents !== undefined) setSubagents((current) => mergeSubagentSnapshots(current, d.state?.subagents ?? []));
               if (d.state?.planMode !== undefined) setPlanMode(d.state.planMode ?? null);
               if (d.state?.goal !== undefined) refreshGoalAfterTurn(d.state.goal ?? null);
+              if (d.state?.loop !== undefined) setLoop(d.state.loop);
               // Aborted turns can leave messages queued in pi (delivered with the
               // next turn); dead wrapper (no state) means the queue is gone.
               setQueuedMessages(normalizeQueuedMessages(d.state?.queuedMessages));
@@ -1449,6 +1456,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         }));
         break;
       }
+      case "tan_result":
+        appendCommandOutput(`${t(`chat.tanResult.${event.status}`)}\n\n${event.text}`);
+        break;
+      case "loop_updated":
+        setLoop(event.state as WebLoopInfo);
+        break;
+      case "session_refresh":
+        if (sessionIdRef.current) void loadSession(sessionIdRef.current);
+        break;
       case "goal_updated": {
         // Goal changes from a command in any tab or from the agent's `goal`
         // tool. Completion clears the goal at the turn's end, which the
@@ -1680,7 +1696,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // Pure event projections above apply the SDK's display/state effects.
         break;
     }
-  }, [addNotice, t, cancelEventStreamGrace, confirmPrompt, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, onSessionRenamed, refreshContextUsage, refreshGoalAfterTurn, restoreRejectedPrompt, scheduleEventStreamClose, settleUiStage]);
+  }, [addNotice, t, appendCommandOutput, cancelEventStreamGrace, confirmPrompt, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, onSessionRenamed, refreshContextUsage, refreshGoalAfterTurn, restoreRejectedPrompt, scheduleEventStreamClose, settleUiStage]);
   handleAgentEventRef.current = handleAgentEvent;
 
   // A send path that failed before the server accepted the submission must
@@ -2275,6 +2291,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           return planSlashCommandOutcome(intent, transitionError);
         }
 
+        case "queue":
+        case "loop":
+        case "tan": {
+          if (!sid) return complete({ handled: true, error: "No active session" });
+          await ensureEventsConnected(sid);
+          const result = await sendAgentCommand<{ loop?: WebLoopInfo }>(sid, { type: "execute_slash_command", message: text });
+          if (result?.loop) setLoop(result.loop);
+          const state = await sendAgentCommand<AgentStateResponse>(sid, { type: "get_state" });
+          if (state?.queuedMessages) setQueuedMessages(normalizeQueuedMessages(state.queuedMessages));
+          promoteNewSession();
+          return { handled: true };
+        }
+
         case "goal": {
           // TUI-only in the SDK; web goal mode runs on the server's goal
           // controller (lib/goal-session.ts).
@@ -2361,7 +2390,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       if (commandName === "compact") setIsCompacting(false);
     }
-  }, [addNotice, appendCommandOutput, ensureNewSession, handleSetPlanMode, isCompacting, loadModels, loadSession, loadSlashCommands, loadTools, planMode, promoteNewSession, onSessionStatsPanelOpen, onRequestNewSession, onOpenSettings, performGoalAction, runGoalCommand, askBtw, loadBtwHistory]);
+  }, [addNotice, appendCommandOutput, ensureNewSession, ensureEventsConnected, handleSetPlanMode, isCompacting, loadModels, loadSession, loadSlashCommands, loadTools, planMode, promoteNewSession, onSessionStatsPanelOpen, onRequestNewSession, onOpenSettings, performGoalAction, runGoalCommand, askBtw, loadBtwHistory]);
 
   // Queued (undelivered) messages live in the queue panel only; the chat gets
   // the real user message when pi delivers it (user message_end event). An
@@ -2559,6 +2588,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         }
         const state = agentState?.state;
         if (state) {
+          if (state.loop) setLoop(state.loop);
           if (state.isCompacting !== undefined) setIsCompacting(state.isCompacting);
           if (state.contextUsage !== undefined) setContextUsage(state.contextUsage ?? null);
           if (state.systemPrompt !== undefined) setSystemPrompt(state.systemPrompt ?? null);
@@ -2677,7 +2707,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     agentRunning, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, modelRoles, newSessionModel, toolPreset, thinkingLevel,
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, modelSwitching, sessionStats,
-    slashCommands, slashCommandsLoading, queuedMessages, subagents, planMode, goal,
+    slashCommands, slashCommandsLoading, queuedMessages, subagents, planMode, goal, loop,
     btwRecords, btwVisible, askBtw, cancelBtw,
     notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection: isNew && newSessionModel === null,

@@ -240,7 +240,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
     agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, modelRoles, toolPreset, thinkingLevel,
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, modelSwitching, sessionStats,
-    slashCommands, slashCommandsLoading, queuedMessages, subagents, planMode, goal,
+    slashCommands, slashCommandsLoading, queuedMessages, subagents, planMode, goal, loop,
     btwRecords, btwVisible, askBtw, cancelBtw,
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection,
@@ -444,6 +444,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
       onSetPlanMode={handleSetPlanMode}
       goal={goal}
       onGoalAction={handleGoalAction}
+      loop={loop}
+      onDisableLoop={() => { void handleBuiltinSlashCommand("/loop"); }}
       soundEnabled={soundEnabled}
       onSoundToggle={onSoundToggle}
       onAudioUnlock={unlockAudio}

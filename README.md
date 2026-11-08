@@ -40,6 +40,8 @@ agegr/pi-web  →  ddallabenetta/omp-web  →  n0rthwood/omp-web  →  本仓库
 - **分支与派生**：从任意一条消息继续（会话内分支），或派生出独立的新会话。
 - **模型角色**：按工作类型（`default`、`smol`、`slow`、`plan`、`commit`、`task` 等）分配模型，与 TUI 的 `/model` 写入同一份配置。
 - **计划模式**：先让 agent 起草计划，确认后再执行。
+- **排队与循环**：`/queue <message>` 空闲时立即发送，运行中等待 agent 让出；`/loop [次数|时长] [--while|--until '<命令>'] [提示]` 重复下一条或内联提示，次数包含首次运行，条件从第二次起按退出码判断。再次 `/loop` 关闭，中止会暂停并在下一条提示时恢复；输入框附近可查看状态并关闭。
+- **后台旁支**：`/tan <work>` 复用 SDK 的后台会话克隆与作业管理，在子 agent 面板查看，完成结果显示在当前对话。
 - **项目文件**：侧边栏文件树，预览源码、Markdown、图片、音频、PDF、DOCX，查看 Git diff，切换 Git worktree。
 - **内部资源链接**：聊天中的 `agent://`、`artifact://`、`local://`、`memory://`、`issue://`、`pr://`、`skill://`、`rule://`、`omp://` 链接与独立行内代码可在右侧标签页只读打开；读取绑定原会话，历史会话无需启动 agent。
 - **网页配置**：管理模型提供方、OAuth 登录与 API Key、`models.yml`、插件和技能。
