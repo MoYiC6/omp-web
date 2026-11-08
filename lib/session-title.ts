@@ -1,10 +1,10 @@
 import { completeSimple, type Api, type Model } from "@oh-my-pi/pi-ai";
 import { resolveRoleSelection } from "@oh-my-pi/pi-coding-agent/config/model-resolver";
+import { roleCandidatePool } from "@oh-my-pi/pi-coding-agent/config/model-roles";
 import { generateSessionTitle as generateOmpSessionTitle } from "@oh-my-pi/pi-coding-agent/utils/title-generator";
 import { isLowSignalTitleInput } from "@oh-my-pi/pi-coding-agent/tiny/text";
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import type { AgentSessionLike } from "./omp-types";
-import { getOmpSetting } from "@/lib/omp-setting-access";
 
 const MAX_TITLE_LENGTH = 150;
 const TITLE_MARKER_INSTRUCTION =
@@ -258,6 +258,16 @@ function resolveWebTitleModel(session: AgentSessionLike): Model<Api> | undefined
     ?? session.model as Model<Api> | undefined;
 }
 
+/**
+ * Mirrors the SDK title generator's first pick: a local tiny model
+ * (`modelRoles.tiny = local/<id>`, the 18.x replacement for the removed
+ * `providers.tinyModel` setting) is a no-billing boundary owned by the SDK.
+ */
+function usesLocalTitleModel(session: AgentSessionLike): boolean {
+  const pool = roleCandidatePool("tiny", session.settings, session.modelRegistry as never) as Model<Api>[];
+  return resolveRoleSelection(["tiny", "commit", "smol"], session.settings, pool)?.model.api === "local-inference";
+}
+
 async function generateOnlineWebSessionTitle(session: AgentSessionLike, firstMessage: string): Promise<string | null> {
   if (isLowSignalWebTitleInput(firstMessage)) return null;
   const model = resolveWebTitleModel(session);
@@ -322,7 +332,7 @@ export async function generateSessionTitle(
     throw new Error("The session has no user messages to name");
   }
 
-  const title = getOmpSetting<string | undefined>(session.settings, "providers.tinyModel") === "online"
+  const title = !usesLocalTitleModel(session)
     ? await generateOnlineWebSessionTitle(session, firstMessage)
     : prependIssueAnnotationPrefix(
       await generateOmpSessionTitle(
