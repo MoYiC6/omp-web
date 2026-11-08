@@ -153,7 +153,7 @@ function SafeMarkdownBody({ children, className, ...props }: React.ComponentProp
 // push the conversation off screen; overflow scrolls inside the bubble.
 const USER_BUBBLE_MAX_HEIGHT = 300;
 
-function loadThinkingContent(sessionId: string, entryId: string, blockIndex: number): Promise<string> {
+function loadThinkingContent(sessionId: string, entryId: string, blockIndex: number, t: ReturnType<typeof useI18n>["t"]): Promise<string> {
   const key = `${sessionId}:${entryId}:${blockIndex}`;
   const cached = thinkingContentCache.get(key);
   if (cached) {
@@ -167,7 +167,7 @@ function loadThinkingContent(sessionId: string, entryId: string, blockIndex: num
   ).then(async (response) => {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json() as { thinking?: unknown };
-    if (typeof data.thinking !== "string") throw new Error("Invalid thinking response");
+    if (typeof data.thinking !== "string") throw new Error(t("message.invalidThinkingResponse"));
     return data.thinking;
   }).catch((error) => {
     thinkingContentCache.delete(key);
@@ -658,7 +658,7 @@ function AssistantMessageView({
                     const bg = tps >= 50 ? "#53b3cb" : tps >= 30 ? "#9bc53d" : tps >= 15 ? "#f9c22e" : "#e01a4f";
                     return (
                       <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 4, background: bg, color: "#fff", fontSize: 11, fontWeight: 400 }}>
-                        {tps.toFixed(1)} t/s
+                        {tps.toFixed(1)} {t("message.tokensPerSecond")}
                       </span>
                     );
                   })()}
@@ -692,7 +692,7 @@ function AssistantMessageView({
             overflowWrap: "anywhere",
           }}
         >
-          Error: {providerError}
+          {t("message.errorPrefix")} {providerError}
         </div>
       )}
 
@@ -705,7 +705,7 @@ function AssistantMessageView({
       }}>
         {message.usage && !isStreaming && (
           <div style={{ fontSize: 11, color: "var(--text-dim)" }}>
-            {formatUsage(message.usage)}
+            {formatUsage(message.usage, t)}
           </div>
         )}
         {textContent && !isStreaming && (
@@ -800,7 +800,7 @@ function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
 
     setLoading(true);
     setError(null);
-    void loadThinkingContent(sessionId, entryId, blockIndex)
+    void loadThinkingContent(sessionId, entryId, blockIndex, t)
       .then((value) => {
         if (!cancelled) setContent(value);
       })
@@ -833,7 +833,7 @@ function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
         )}
       </div>
       {duration !== undefined && hasText && (
-        <span className="markdown-thinking-duration">{duration}s</span>
+        <span className="markdown-thinking-duration">{t("message.durationSeconds", { seconds: duration })}</span>
       )}
     </div>
   );
@@ -841,6 +841,7 @@ function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
 
 
 function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; result?: ToolResultMessage; duration?: number }) {
+  const { t } = useI18n();
   const normalizedToolName = block.toolName.toLowerCase();
   const isEditTool = normalizedToolName === "edit" ||
     normalizedToolName.startsWith("edit_") ||
@@ -897,7 +898,7 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
   }
 
   const hasStructuredPreview = Boolean(todoPhases || resultDiff);
-  const headerPreview = getStructuredToolPreview(block, todoPhases);
+  const headerPreview = getStructuredToolPreview(block, todoPhases, t);
 
 
   return (
@@ -940,8 +941,8 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
         </span>
         {diffStats && (
           <span
-            title={`${diffStats.added} lines added, ${diffStats.removed} lines removed`}
-            aria-label={`${diffStats.added} lines added, ${diffStats.removed} lines removed`}
+            title={t("message.diffStats", { added: diffStats.added, removed: diffStats.removed })}
+            aria-label={t("message.diffStats", { added: diffStats.added, removed: diffStats.removed })}
             style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0, fontFamily: "var(--font-mono)", fontSize: 11, fontVariantNumeric: "tabular-nums" }}
           >
             <span style={{ color: "var(--success)" }}>+{diffStats.added}</span>
@@ -949,7 +950,7 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
           </span>
         )}
         {duration !== undefined && (
-          <span style={{ fontSize: 11, color: "var(--text-dim)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{duration}s</span>
+          <span style={{ fontSize: 11, color: "var(--text-dim)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{t("message.durationSeconds", { seconds: duration })}</span>
         )}
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--text-dim)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
           <polyline points="2 3.5 5 6.5 8 3.5" />
@@ -1207,6 +1208,7 @@ function isTodoPreviewStatus(value: unknown): value is TodoPreviewStatus {
 }
 
 function TodoChecklistPreview({ phases }: { phases: TodoPreviewPhase[] }) {
+  const { t } = useI18n();
   const totalTasks = phases.reduce((sum, phase) => sum + phase.tasks.length, 0);
   const completedTasks = phases.reduce(
     (sum, phase) => sum + phase.tasks.filter((task) => task.status === "completed").length,
@@ -1214,14 +1216,14 @@ function TodoChecklistPreview({ phases }: { phases: TodoPreviewPhase[] }) {
   );
 
   return (
-    <div className="todo-checklist-preview" role="list" aria-label={`Todo ${totalTasks} tasks`}>
+    <div className="todo-checklist-preview" role="list" aria-label={t("message.todoTasks", { count: totalTasks })}>
       <div className="todo-checklist-header">
         <svg className="todo-checklist-icon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
           <path d="M5.5 3.25h7M5.5 7h7M5.5 10.75h7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
           <path d="m1.5 3.1 1 1 1.7-1.9M1.5 6.85l1 1 1.7-1.9M1.5 10.6l1 1 1.7-1.9" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
-        <span className="todo-checklist-title">Todo</span>
-        <span className="todo-checklist-count">{totalTasks} {totalTasks === 1 ? "task" : "tasks"}</span>
+        <span className="todo-checklist-title">{t("message.todo")}</span>
+        <span className="todo-checklist-count">{t(totalTasks === 1 ? "message.taskCount" : "message.tasksCount", { count: totalTasks })}</span>
         {completedTasks > 0 && completedTasks < totalTasks && (
           <span className="todo-checklist-progress">{completedTasks}/{totalTasks}</span>
         )}
@@ -1241,6 +1243,7 @@ function TodoChecklistPreview({ phases }: { phases: TodoPreviewPhase[] }) {
 }
 
 function TodoChecklistRow({ task }: { task: TodoPreviewTask }) {
+  const { t } = useI18n();
   const completed = task.status === "completed";
   const abandoned = task.status === "abandoned";
   const active = task.status === "in_progress";
@@ -1259,7 +1262,7 @@ function TodoChecklistRow({ task }: { task: TodoPreviewTask }) {
   return (
     <div
       role="listitem"
-      aria-label={`${task.status}: ${task.content}`}
+      aria-label={`${t(`message.todoStatus.${task.status}`)}: ${task.content}`}
       className={`todo-checklist-row ${statusClass}`}
     >
       <span aria-hidden="true" className="todo-checklist-marker">
@@ -1292,7 +1295,7 @@ function ConsoleOutputPreview({
   const { t } = useI18n();
   const normalizedLines = normalizeCustomPanelLines(output.split(/\r?\n/));
   const outputLines = normalizedLines.length === 1 && normalizedLines[0] === "" ? [] : normalizedLines;
-  const statusLabel = pending ? t("chat.runningCommand") : isError ? "failed" : "";
+  const statusLabel = pending ? t("chat.runningCommand") : isError ? t("message.failed") : "";
 
   return (
     <div className={`shell-output-preview${isError ? " is-error" : ""}`}>
@@ -1324,12 +1327,12 @@ function ConsoleOutputPreview({
         >
           {command || " "}
         </SyntaxHighlighter>
-        {local && <span className="shell-local-label">local</span>}
+        {local && <span className="shell-local-label">{t("message.local")}</span>}
       </div>
 
       <div className="shell-output-panel">
         <div className="shell-output-divider">
-          <span className="shell-output-label">Output</span>
+          <span className="shell-output-label">{t("session.output")}</span>
           {statusLabel && <span className={`shell-output-status${isError ? " is-error" : pending ? " is-pending" : ""}`}>{statusLabel}</span>}
         </div>
         <div className="shell-output-body" aria-live={pending ? "polite" : undefined}>
@@ -1363,18 +1366,18 @@ function ConsoleOutputPreview({
       </div>
 
       {duration !== undefined && (
-        <div className="shell-output-footer">{duration}s</div>
+        <div className="shell-output-footer">{t("message.durationSeconds", { seconds: duration })}</div>
       )}
     </div>
   );
 }
 
 
-function getStructuredToolPreview(block: ToolCallContent, phases: TodoPreviewPhase[] | null): string {
+function getStructuredToolPreview(block: ToolCallContent, phases: TodoPreviewPhase[] | null, t: ReturnType<typeof useI18n>["t"]): string {
   if (phases) {
     const tasks = phases.flatMap((phase) => phase.tasks);
     const completed = tasks.filter((task) => task.status === "completed" || task.status === "abandoned").length;
-    return `${completed}/${tasks.length} tasks`;
+    return t("message.taskProgress", { completed, total: tasks.length });
   }
   return getToolPreview(block);
 }
@@ -1866,7 +1869,7 @@ function CompactionMessageView({ message }: { message: CustomMessage }) {
           }}
         >
           <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 650 }}>
-            compaction
+            {t("message.compaction")}
           </span>
           {time && <span style={{ marginLeft: "auto", color: "var(--text-dim)", fontSize: 10 }}>{time}</span>}
         </div>
@@ -1896,8 +1899,8 @@ function CompactionFileMetadata({ readFiles, modifiedFiles }: { readFiles: strin
   if (total === 0) return null;
 
   const parts = [];
-  if (readFiles.length > 0) parts.push(`${readFiles.length} read`);
-  if (modifiedFiles.length > 0) parts.push(`${modifiedFiles.length} modified`);
+  if (readFiles.length > 0) parts.push(t("message.readCount", { count: readFiles.length }));
+  if (modifiedFiles.length > 0) parts.push(t("message.modifiedCount", { count: modifiedFiles.length }));
 
   return (
     <details className="compaction-file-details">
@@ -1931,7 +1934,7 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
   const images = getMessageImages(message.content);
   const hasDetails = message.details !== undefined;
   const detailsText = hasDetails ? safeJson(message.details) : "";
-  const title = formatCustomType(message.customType);
+  const title = message.customType || t("message.extension");
   const time = formatTime(message.timestamp);
 
   const copyContent = () => {
@@ -2007,7 +2010,7 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
               textAlign: "left",
             }}
           >
-             {text ? previewText(text) : t("i18n.showExtensionMessage")}
+             {text ? previewText(text, t) : t("i18n.showExtensionMessage")}
           </button>
         )}
 
@@ -2120,13 +2123,10 @@ function safeJson(value: unknown): string {
   }
 }
 
-function formatCustomType(type: string): string {
-  return type || "extension";
-}
 
-function previewText(text: string): string {
+function previewText(text: string, t: ReturnType<typeof useI18n>["t"]): string {
   const normalized = text.replace(/\s+/g, " ").trim();
-  if (!normalized) return "Show extension message";
+  if (!normalized) return t("i18n.showExtensionMessage");
   return normalized.length > 140 ? `${normalized.slice(0, 140)}...` : normalized;
 }
 
@@ -2176,17 +2176,18 @@ function formatUsage(usage: {
   cacheRead: number;
   cacheWrite: number;
   cost: { total: number };
-}): string {
+}, t: ReturnType<typeof useI18n>["t"]): string {
   const parts = [];
-  if (usage.input) parts.push(`${usage.input.toLocaleString()} in`);
-  if (usage.output) parts.push(`${usage.output.toLocaleString()} out`);
-  if (usage.cacheRead) parts.push(`${usage.cacheRead.toLocaleString()} cache R`);
-  if (usage.cacheWrite) parts.push(`${usage.cacheWrite.toLocaleString()} cache W`);
+  if (usage.input) parts.push(t("message.usage.input", { count: usage.input.toLocaleString() }));
+  if (usage.output) parts.push(t("message.usage.output", { count: usage.output.toLocaleString() }));
+  if (usage.cacheRead) parts.push(t("message.usage.cacheRead", { count: usage.cacheRead.toLocaleString() }));
+  if (usage.cacheWrite) parts.push(t("message.usage.cacheWrite", { count: usage.cacheWrite.toLocaleString() }));
   if (usage.cost?.total) parts.push(`$${usage.cost.total.toFixed(4)}`);
   return parts.join(" · ");
 }
 
 function BashExecutionView({ message, sessionId }: { message: BashExecutionMessage; sessionId?: string }) {
+  const { t } = useI18n();
   const [fullOutput, setFullOutput] = useState<string | null>(null);
   const [loadingFull, setLoadingFull] = useState(false);
   const [fullError, setFullError] = useState<string | null>(null);
@@ -2209,7 +2210,7 @@ function BashExecutionView({ message, sessionId }: { message: BashExecutionMessa
       if (d.success) {
         setFullOutput(d.data?.output ?? "");
       } else {
-        setFullError(d.error ?? "failed");
+        setFullError(d.error ?? t("message.failed"));
       }
     } catch (e) {
       setFullError(String(e));
@@ -2249,14 +2250,14 @@ function BashExecutionView({ message, sessionId }: { message: BashExecutionMessa
               disabled={loadingFull}
               style={{ background: "none", border: "none", color: "var(--accent)", cursor: loadingFull ? "default" : "pointer", fontSize: 11, padding: 0, textDecoration: "underline" }}
             >
-              {loadingFull ? "loading…" : "view full output"}
+              {loadingFull ? t("message.loadingOutput") : t("message.viewFullOutput")}
             </button>
           )}
           <a
             href={`${fullOutputUrl}&download=1`}
             style={{ marginLeft: showFullButton ? 10 : 0, color: "var(--accent)", fontSize: 11, textDecoration: "underline" }}
           >
-            download full output
+            {t("message.downloadFullOutput")}
           </a>
           {fullError && <span style={{ marginLeft: 6, color: "var(--text-dim)", fontSize: 11 }}>({fullError})</span>}
         </div>

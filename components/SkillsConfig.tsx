@@ -37,8 +37,8 @@ function updateKey(skill: Skill): string | null {
     : null;
 }
 
-function shortVersion(version?: string): string {
-  return version ? version.slice(0, 8) : "unknown";
+function shortVersion(version: string | undefined, t: ReturnType<typeof useI18n>["t"]): string {
+  return version ? version.slice(0, 8) : t("skills.unknownVersion");
 }
 
 function Toggle({
@@ -147,7 +147,7 @@ function SkillDetail({
                 label === "project" ? "rgba(99,102,241,0.8)" : "var(--text-dim)",
             }}
           >
-            {label}
+            {t(`skills.source.${label}`)}
           </span>
           <span
             style={{
@@ -197,7 +197,7 @@ function SkillDetail({
           <span
             style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}
           >
-            Source
+            {t("i18n.source")}
           </span>
           <a
             href={skill.install.skillsShUrl}
@@ -234,7 +234,7 @@ function SkillDetail({
           <span
             style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}
           >
-            Version
+            {t("i18n.version")}
           </span>
           <div
             style={{
@@ -251,7 +251,7 @@ function SkillDetail({
                 color: "var(--text-muted)",
               }}
             >
-              {shortVersion(updateStatus?.currentVersion ?? skill.install.versionHash)}
+              {shortVersion(updateStatus?.currentVersion ?? skill.install.versionHash, t)}
             </span>
             {skill.install.canCheckForUpdates && (
               <button
@@ -279,7 +279,7 @@ function SkillDetail({
                   color: "#d97706",
                 }}
               >
-                {shortVersion(updateStatus.latestVersion)}
+                {shortVersion(updateStatus.latestVersion, t)}
               </span>
             )}
             {(checkingUpdate ||
@@ -335,7 +335,7 @@ function SkillDetail({
         <span
           style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}
         >
-          Name
+          {t("session.name")}
         </span>
         <span
           style={{
@@ -352,7 +352,7 @@ function SkillDetail({
         <span
           style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}
         >
-          Description
+          {t("skills.description")}
         </span>
         <span
           style={{ fontSize: 14, color: "var(--text-muted)", lineHeight: 1.6 }}
@@ -412,7 +412,7 @@ function AddSkillPanel({
         return;
       }
       setResults(d.results ?? []);
-      if ((d.results ?? []).length === 0) setSearchError("No skills found");
+      if ((d.results ?? []).length === 0) setSearchError(t("i18n.noSkills"));
     } catch (e) {
       setSearchError(String(e));
     } finally {
@@ -690,7 +690,7 @@ function AddSkillPanel({
           <div
             style={{ fontSize: 13, color: "var(--text-dim)", lineHeight: 1.8 }}
           >
-            Search{" "}
+            {t("i18n.search")}{" "}
             <a
               href="https://skills.sh"
               target="_blank"
@@ -699,7 +699,7 @@ function AddSkillPanel({
             >
               skills.sh
             </a>{" "}
-            to discover and install skills for your agent.
+            {t("skills.discoverHint")}
           </div>
         )
       )}
@@ -1184,7 +1184,7 @@ export function SkillsConfig({
                               letterSpacing: "0.06em",
                             }}
                           >
-                            {grpLabel}
+                            {t(`skills.group.${grpLabel}`)}
                           </div>
                           {activeSkills.map(renderSkillRow)}
                           {dormantSkills.length > 0 && (

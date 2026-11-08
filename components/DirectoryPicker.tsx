@@ -145,7 +145,7 @@ export function DirectoryPicker({ onCancel, onSelect, busy = false, error }: Pro
             id="directory-path"
             type="text"
             value={pathInput}
-            placeholder="/path/to/project or ~/project"
+            placeholder={t("directory.pathPlaceholder")}
             autoFocus
             autoComplete="off"
             spellCheck={false}

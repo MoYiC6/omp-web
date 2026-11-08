@@ -23,11 +23,11 @@ function isSubagentActive(subagent: SubagentSnapshot): boolean {
   return subagent.status === "pending" || subagent.status === "running";
 }
 
-function formatSubagentDuration(durationMs = 0): string {
-  const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
+function formatSubagentDuration(durationMs: number | undefined, t: ReturnType<typeof useI18n>["t"]): string {
+  const totalSeconds = Math.max(0, Math.round((durationMs ?? 0) / 1000));
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
-  return minutes > 0 ? `${minutes}m ${seconds.toString().padStart(2, "0")}s` : `${seconds}s`;
+  return minutes > 0 ? t("subagents.durationMinutes", { minutes, seconds: seconds.toString().padStart(2, "0") }) : t("subagents.durationSeconds", { seconds });
 }
 
 function statusColor(subagent: SubagentSnapshot): string {
@@ -185,7 +185,7 @@ function SubagentDetail({
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 11px", padding: "7px 12px", borderBottom: "1px solid var(--border)", color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 9, fontVariantNumeric: "tabular-nums" }}>
         <span style={{ color }}>{active ? t("subagents.running") : subagentActivity(subagent, t)}</span>
-        <span>{formatSubagentDuration(progress?.durationMs)}</span>
+        <span>{formatSubagentDuration(progress?.durationMs, t)}</span>
         <span>{t("subagents.tools", { count: progress?.toolCount ?? 0 })}</span>
         <span>{t("subagents.tokens", { count: progress?.tokens ?? 0 })}</span>
         {progress?.resolvedModel && <span>{progress.resolvedModel}</span>}
@@ -262,7 +262,7 @@ function SubagentRow({ subagent, selected, onSelect }: { subagent: SubagentSnaps
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 11, fontWeight: 650 }}>{subagent.id}</span>
         <span style={{ padding: "1px 4px", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text-dim)", fontSize: 8.5, lineHeight: 1.3 }}>{subagent.agent}</span>
       </span>
-      <span style={{ color: "var(--text-dim)", fontSize: 9, fontVariantNumeric: "tabular-nums" }}>{formatSubagentDuration(progress?.durationMs)}</span>
+      <span style={{ color: "var(--text-dim)", fontSize: 9, fontVariantNumeric: "tabular-nums" }}>{formatSubagentDuration(progress?.durationMs, t)}</span>
       <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: progress?.retryState ? "var(--warning)" : active ? "var(--text-muted)" : color, fontSize: 9.5 }}>{activity}</span>
       <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--text-dim)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="3 2 7 5 3 8" /></svg>
     </button>

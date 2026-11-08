@@ -77,7 +77,7 @@ export function selectTopLevelBranches(tree: SessionTreeNode[]): SessionTreeNode
   return first.children.length > 1 ? first.children : [];
 }
 
-function getLabel(entry: SessionEntry): string {
+function getLabel(entry: SessionEntry, t: ReturnType<typeof useI18n>["t"]): string {
   if (entry.type === "message" && "message" in entry) {
     const msg = entry.message as { role: string; content: unknown };
     const content = msg.content;
@@ -92,7 +92,7 @@ function getLabel(entry: SessionEntry): string {
     }
     if (text.length > 40) text = text.slice(0, 40) + "…";
     if (text) return text;
-    if (msg.role === "assistant") return "[assistant]";
+    if (msg.role === "assistant") return t("branches.assistantFallback");
   }
   return entry.type;
 }
@@ -117,10 +117,11 @@ interface TreeNodeProps {
 }
 
 function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelect }: TreeNodeProps) {
+  const { t } = useI18n();
   const { node: rep, skipped, branchPreview, labelEntry } = compressChain(node);
   const isActive = activePathIds.has(rep.entry.id);
   const isOnPath = activePathIds.has(node.entry.id) || activePathIds.has(rep.entry.id);
-  const label = branchPreview?.text ?? getLabel(labelEntry);
+  const label = branchPreview?.text ?? getLabel(labelEntry, t);
   const role = branchPreview
     ? branchPreview.role ?? null
     : isMessageEntry(labelEntry)
@@ -203,7 +204,7 @@ function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelec
             flexShrink: 0,
             lineHeight: "16px",
           }}>
-            {role === "user" ? "U" : "A"}
+            {role === "user" ? t("branches.userBadge") : t("branches.assistantBadge")}
           </span>
         )}
 

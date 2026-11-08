@@ -93,7 +93,7 @@ export function IssueChips({ name }: { name: string }) {
             border: "1px solid var(--border)",
           }}
         >
-          rel #{n}
+          {t("home.relatedIssueChip", { number: n })}
         </a>
       ))}
       {text}

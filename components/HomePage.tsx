@@ -188,13 +188,13 @@ export function HomePage() {
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data?.success || !data.sessionId) {
-          const reason = data?.error ?? `Request failed (${res.status})`;
+          const reason = data?.error ?? t("home.requestFailedStatus", { status: res.status });
           setNewConvError(t("home.newConversationFailed", { name: machineName, reason }));
           return;
         }
         navigate({ machineId, project: projectRoot, session: data.sessionId }, { history: "push" });
       } catch (err) {
-        setNewConvError(err instanceof Error ? err.message : "Request failed");
+        setNewConvError(err instanceof Error ? err.message : t("home.requestFailed"));
       } finally {
         setCreating(false);
       }
@@ -660,7 +660,7 @@ export function HomePage() {
             <span style={{ flex: 1, fontSize: 13, color: "var(--danger)" }}>{newConvError}</span>
             <button
               type="button"
-              aria-label="Dismiss"
+              aria-label={t("home.dismiss")}
               onClick={() => setNewConvError(null)}
               style={{
                 background: "transparent",
