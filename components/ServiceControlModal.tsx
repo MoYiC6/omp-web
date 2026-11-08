@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiPath, LOCAL_MACHINE_ID } from "@/lib/api-path";
 import { useMachineHealth, type SwitcherHealth } from "@/hooks/useMachineHealth";
+import { useI18n } from "@/hooks/useI18n";
 
 // ---- API shapes -----------------------------------------------------------
 // Local duplicates of the issue #85 service-control route contract
@@ -68,11 +69,11 @@ function statusColor(status: SwitcherHealth | undefined): string {
   return "var(--danger)";
 }
 
-function statusLabel(status: SwitcherHealth | undefined): string {
-  if (!status || status.state === "loading") return "Checking";
-  if (status.state === "online") return "Online";
-  if (status.state === "unauthorized") return "Unauthorized";
-  return "Offline";
+function statusLabelKey(status: SwitcherHealth | undefined): string {
+  if (!status || status.state === "loading") return "service.healthChecking";
+  if (status.state === "online") return "service.healthOnline";
+  if (status.state === "unauthorized") return "service.healthUnauthorized";
+  return "service.healthOffline";
 }
 
 /**
@@ -91,6 +92,7 @@ export function ServiceControlModal({
   machines: readonly ServiceControlMachine[];
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   // machines is never empty — MachineProvider seeds [localMachine] and keeps
   // the local entry first on every refresh.
   const [targetId, setTargetId] = useState(() => machines[0]?.id ?? LOCAL_MACHINE_ID);
@@ -285,11 +287,11 @@ export function ServiceControlModal({
         // A run is already in progress: adopt and watch it instead of making
         // the user re-arm the confirm for an action that cannot start.
         if (body.status) {
-          setConflictNote("A service run is already in progress — showing its progress.");
+          setConflictNote("service.conflictProgress");
           setStatus(body.status);
           setPhase("running");
         } else {
-          setPostError(body.error ?? "A service run is already in progress.");
+          setPostError(body.error ?? t("service.conflict"));
         }
         return;
       }
@@ -299,17 +301,17 @@ export function ServiceControlModal({
     } finally {
       setPosting(false);
     }
-  }, [armed, availability, mode, phase, posting, target]);
+  }, [armed, availability, mode, phase, posting, target, t]);
 
   const liveKnown = info.liveSessions !== null;
   const liveCount = info.liveSessions ?? 0;
   const warnColor = liveKnown && liveCount > 0 ? "var(--danger)" : "var(--warning)";
   const configuring = phase === "configure";
-  const confirmLabel = posting
-    ? "Starting…"
+  const confirmLabel = t(posting
+    ? "service.starting"
     : armed
-      ? mode === "upgrade" ? "Confirm upgrade?" : "Confirm restart?"
-      : mode === "upgrade" ? "Upgrade & restart" : "Restart only";
+      ? mode === "upgrade" ? "service.confirmUpgrade" : "service.confirmRestart"
+      : mode === "upgrade" ? "service.upgradeRestart" : "service.restartOnly");
   const metaBits = [
     info.version ? `omp-web ${info.version}` : null,
     info.hostname ?? null,
@@ -339,10 +341,10 @@ export function ServiceControlModal({
       >
         <span aria-hidden="true" style={{ width: 7, height: 7, flex: "0 0 auto", borderRadius: "50%", background: statusColor(dot) }} />
         <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {machine.isLocal ? `This machine · ${machine.name}` : machine.name}
+          {machine.isLocal ? t("service.thisMachineNamed", { name: machine.name }) : machine.name}
         </span>
         {machine.isLocal
-          ? <span style={{ color: statusColor(dot), fontSize: 9 }}>{statusLabel(dot)}</span>
+          ? <span style={{ color: statusColor(dot), fontSize: 9 }}>{t(statusLabelKey(dot))}</span>
           : <span style={{ color: "var(--text-dim)", fontSize: 9, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{machine.id}</span>}
       </button>
     );
@@ -413,11 +415,11 @@ export function ServiceControlModal({
       >
         <div style={{ padding: "16px 18px 12px", borderBottom: "1px solid var(--border)" }}>
           <div id="service-control-title" style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>
-            Service restart / upgrade
+            {t("service.title")}
           </div>
           {configuring && target && (
             <div style={{ marginTop: 6, fontSize: 11, lineHeight: 1.5, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
-              {target.isLocal ? `This machine · ${target.name}` : target.name}
+              {target.isLocal ? t("service.thisMachineNamed", { name: target.name }) : target.name}
               {metaBits.length > 0 ? ` — ${metaBits.join(" · ")}` : ""}
             </div>
           )}
@@ -428,46 +430,45 @@ export function ServiceControlModal({
             <>
               {isGateway ? (
                 <div>
-                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-dim)", marginBottom: 6 }}>Target</div>
-                  <div role="listbox" aria-label="Restart target" style={{ overflow: "hidden", border: "1px solid var(--border)", borderRadius: 7, background: "var(--bg)" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-dim)", marginBottom: 6 }}>{t("service.target")}</div>
+                  <div role="listbox" aria-label={t("service.restartTarget")} style={{ overflow: "hidden", border: "1px solid var(--border)", borderRadius: 7, background: "var(--bg)" }}>
                     {machines.map(renderTargetRow)}
                   </div>
                 </div>
               ) : (
                 <div style={{ padding: "6px 8px", border: "1px solid var(--border)", borderRadius: 7, background: "var(--bg)", font: "10px var(--font-mono)", color: "var(--text-muted)" }}>
-                  {target ? `This machine · ${target.name}` : "This machine"}
+                  {target ? t("service.thisMachineNamed", { name: target.name }) : t("service.thisMachine")}
                   {metaBits.length > 0 ? <span style={{ color: "var(--text-dim)" }}> — {metaBits.join(" · ")}</span> : null}
                 </div>
               )}
 
               <div style={{ marginTop: 14 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-dim)", marginBottom: 6 }}>Action</div>
-                <div role="radiogroup" aria-label="Service action" style={{ overflow: "hidden", border: "1px solid var(--border)", borderRadius: 7, background: "var(--bg)" }}>
-                  {renderModeRow("restart", "Restart only", "Restart the omp-web systemd service.")}
-                  {renderModeRow("upgrade", "Upgrade & restart", "Install the latest omp-web package via apt, then restart the service.")}
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-dim)", marginBottom: 6 }}>{t("service.action")}</div>
+                <div role="radiogroup" aria-label={t("service.actionLabel")} style={{ overflow: "hidden", border: "1px solid var(--border)", borderRadius: 7, background: "var(--bg)" }}>
+                  {renderModeRow("restart", t("service.restartOnly"), t("service.restartDescription"))}
+                  {renderModeRow("upgrade", t("service.upgradeRestart"), t("service.upgradeDescription"))}
                 </div>
               </div>
 
               <div style={{ marginTop: 12, padding: "8px 10px", border: `1px solid ${warnColor}`, borderRadius: 5, display: "flex", flexDirection: "column", gap: 4 }}>
                 <div style={{ color: warnColor, fontSize: 12, lineHeight: 1.5 }}>
-                  Restarting terminates all live agent sessions on this machine
-                  {liveKnown ? ` — Live sessions: ${liveCount}` : "."}
+                  {t(liveKnown ? "service.liveWarningCount" : "service.liveWarning", { count: liveCount })}
                 </div>
                 {isSelf && (
                   <div style={{ color: "var(--text-muted)", fontSize: 12, lineHeight: 1.5 }}>
-                    This page is served by this machine — it will disconnect and recover automatically.
+                    {t("service.selfWarning")}
                   </div>
                 )}
                 {mode === "upgrade" && (
                   <div style={{ color: "var(--text-muted)", fontSize: 12, lineHeight: 1.5 }}>
-                    The upgrade runs apt before restarting and can take several minutes.
+                    {t("service.upgradeWarning")}
                   </div>
                 )}
               </div>
 
               {availability && !availability.ok && (
                 <div role="alert" style={{ marginTop: 10, color: "var(--danger)", fontSize: 12, lineHeight: 1.5 }}>
-                  Not available: {availability.reason}
+                  {t("service.unavailable", { reason: availability.reason })}
                 </div>
               )}
               {postError && (
@@ -482,12 +483,12 @@ export function ServiceControlModal({
             <>
               {conflictNote && (
                 <div style={{ marginBottom: 10, padding: "8px 10px", border: "1px solid var(--warning)", borderRadius: 5, color: "var(--warning)", fontSize: 12, lineHeight: 1.5 }}>
-                  {conflictNote}
+                  {t(conflictNote)}
                 </div>
               )}
               <div style={{ display: "flex", alignItems: "baseline", gap: 8, font: "11px var(--font-mono)", color: "var(--text-muted)", flexWrap: "wrap" }}>
-                {status?.run_id && <span title="Run id">run {status.run_id}</span>}
-                {status?.mode && <span style={{ color: "var(--text-dim)" }}>{status.mode}</span>}
+                {status?.run_id && <span title={t("service.runId")}>{t("service.run", { id: status.run_id })}</span>}
+                {status?.mode && <span style={{ color: "var(--text-dim)" }}>{status.mode === "restart" ? t("service.modeRestart") : status.mode === "upgrade" ? t("service.modeUpgrade") : status.mode}</span>}
                 <span
                   style={{
                     color: phase === "done"
@@ -499,12 +500,12 @@ export function ServiceControlModal({
                   }}
                 >
                   {phase === "running"
-                    ? "Running…"
+                    ? t("service.running")
                     : phase === "waiting"
-                      ? isSelf ? "Waiting for the service to come back — the page will reload…" : "Waiting for the service to come back…"
+                      ? t(isSelf ? "service.waitingReload" : "service.waiting")
                       : status
-                        ? `Finished — exit code ${status.exit_code ?? "unknown"}`
-                        : "Finished"}
+                        ? t("service.finishedCode", { code: status.exit_code ?? t("service.unknown") })
+                        : t("service.finished")}
                 </span>
               </div>
               {(tail.length > 0 || phase !== "done") && (
@@ -524,9 +525,9 @@ export function ServiceControlModal({
                     maxHeight: 200,
                     overflowY: "auto",
                   }}
-                  aria-label="Run log tail"
+                  aria-label={t("service.runLogTail")}
                 >
-                  {tail.length > 0 ? tail.join("\n") : "Waiting for output…"}
+                  {tail.length > 0 ? tail.join("\n") : t("service.waitingOutput")}
                 </div>
               )}
             </>
@@ -557,7 +558,7 @@ export function ServiceControlModal({
               fontSize: 12,
             }}
           >
-            {configuring ? "Cancel" : "Close"}
+            {t(configuring ? "service.cancel" : "service.close")}
           </button>
           {configuring && (
             <button

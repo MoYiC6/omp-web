@@ -4,12 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import { useMachines } from "@/lib/machine-context";
 import { useNavigation } from "./NavigationProvider";
 import { useMachineHealth, type SwitcherHealth } from "@/hooks/useMachineHealth";
+import { useI18n } from "@/hooks/useI18n";
 
-function displayStatus(status: SwitcherHealth | undefined): string {
-  if (!status || status.state === "loading") return "Checking";
-  if (status.state === "online") return "Online";
-  if (status.state === "unauthorized") return "Unauthorized";
-  return "Offline";
+function statusKey(status: SwitcherHealth | undefined): string {
+  if (!status || status.state === "loading") return "machineSwitcher.status.checking";
+  if (status.state === "online") return "machineSwitcher.status.online";
+  if (status.state === "unauthorized") return "machineSwitcher.status.unauthorized";
+  return "machineSwitcher.status.offline";
 }
 
 function statusColor(status: SwitcherHealth | undefined): string {
@@ -20,6 +21,7 @@ function statusColor(status: SwitcherHealth | undefined): string {
 }
 
 export function MachineSwitcher({ onManageMachines }: { onManageMachines: () => void }) {
+  const { t } = useI18n();
   const { machineId, machines, loading } = useMachines();
   const { navigate } = useNavigation();
   const [open, setOpen] = useState(false);
@@ -64,31 +66,31 @@ export function MachineSwitcher({ onManageMachines }: { onManageMachines: () => 
             // Fresh verdicts the moment the list becomes relevant.
             if (!open) refresh();
           }}
-          title={singleMachine ? "Local machine" : `Machine: ${currentMachine.name}`}
+          title={singleMachine ? t("machineSwitcher.localMachine") : t("machineSwitcher.machineName", { name: currentMachine.name })}
           style={{ minWidth: 0, flex: 1, height: 28, padding: "0 8px", display: "flex", alignItems: "center", gap: 7, border: remote ? "1px solid var(--accent)" : "1px solid var(--border)", borderRadius: 6, background: remote ? "var(--bg-selected)" : "transparent", color: remote ? "var(--accent)" : "var(--text-muted)", cursor: loading ? "wait" : "pointer", font: "10px var(--font-mono)", textAlign: "left" }}
         >
           <span aria-hidden="true" style={{ width: 7, height: 7, flex: "0 0 auto", borderRadius: "50%", background: statusColor(currentStatus) }} />
           <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentMachine.name}</span>
-          {remote && <span style={{ fontSize: 8, letterSpacing: "0.06em", textTransform: "uppercase" }}>Remote machine</span>}
+          {remote && <span style={{ fontSize: 8, letterSpacing: "0.06em", textTransform: "uppercase" }}>{t("machineSwitcher.remoteMachine")}</span>}
           {!singleMachine && <span aria-hidden="true">⌄</span>}
         </button>
-        {singleMachine && <button type="button" onClick={onManageMachines} title="Manage machines" style={{ height: 28, padding: "0 7px", border: "1px solid var(--border)", borderRadius: 6, background: "transparent", color: "var(--text-dim)", cursor: "pointer", font: "10px var(--font-mono)" }}>Manage machines</button>}
+        {singleMachine && <button type="button" onClick={onManageMachines} title={t("machineSwitcher.manageMachines")} style={{ height: 28, padding: "0 7px", border: "1px solid var(--border)", borderRadius: 6, background: "transparent", color: "var(--text-dim)", cursor: "pointer", font: "10px var(--font-mono)" }}>{t("machineSwitcher.manageMachines")}</button>}
       </div>
       {showCurrentError && <div role="alert" style={{ display: "flex", alignItems: "flex-start", gap: 6, marginTop: 6, padding: "6px 7px", border: "1px solid var(--danger)", borderRadius: 5, color: "var(--danger)", font: "10px/1.35 var(--font-mono)" }}>
-        <span style={{ minWidth: 0, flex: 1 }}>{currentMachine.name} is {displayStatus(currentStatus).toLowerCase()}: {currentStatus?.reason}</span>
-        <button type="button" aria-label={`Dismiss ${currentMachine.name} connection error`} onClick={() => setDismissedError(currentMachine.id)} style={{ padding: 0, border: 0, background: "transparent", color: "inherit", cursor: "pointer", fontSize: 14, lineHeight: 1 }}>×</button>
+        <span style={{ minWidth: 0, flex: 1 }}>{t(`machineSwitcher.error.${currentStatus?.state ?? "loading"}`, { name: currentMachine.name, reason: currentStatus?.reason ?? "" })}</span>
+        <button type="button" aria-label={t("machineSwitcher.dismissError", { name: currentMachine.name })} onClick={() => setDismissedError(currentMachine.id)} style={{ padding: 0, border: 0, background: "transparent", color: "inherit", cursor: "pointer", fontSize: 14, lineHeight: 1 }}>×</button>
       </div>}
-      {open && !singleMachine && <div role="listbox" aria-label="Choose machine" style={{ position: "absolute", zIndex: 20, top: 34, left: 0, right: 0, overflow: "hidden", border: "1px solid var(--border)", borderRadius: 7, background: "var(--bg-panel)", boxShadow: "0 10px 28px color-mix(in srgb, var(--text) 16%, transparent)" }}>
+      {open && !singleMachine && <div role="listbox" aria-label={t("machineSwitcher.chooseMachine")} style={{ position: "absolute", zIndex: 20, top: 34, left: 0, right: 0, overflow: "hidden", border: "1px solid var(--border)", borderRadius: 7, background: "var(--bg-panel)", boxShadow: "0 10px 28px color-mix(in srgb, var(--text) 16%, transparent)" }}>
         {machines.map((machine) => {
           const status = health[machine.id];
           const active = machine.id === currentMachine.id;
           return <button key={machine.id} type="button" role="option" aria-selected={active} onClick={() => selectMachine(machine.id)} style={{ width: "100%", minHeight: 34, padding: "6px 8px", display: "flex", alignItems: "center", gap: 7, border: 0, borderBottom: "1px solid var(--border)", background: active ? "var(--bg-selected)" : "transparent", color: active ? "var(--text)" : "var(--text-muted)", cursor: "pointer", font: "10px var(--font-mono)", textAlign: "left" }}>
             <span aria-hidden="true" style={{ width: 7, height: 7, flex: "0 0 auto", borderRadius: "50%", background: statusColor(status) }} />
             <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{machine.name}</span>
-            <span style={{ color: statusColor(status), fontSize: 9 }}>{displayStatus(status)}</span>
+            <span style={{ color: statusColor(status), fontSize: 9 }}>{t(statusKey(status))}</span>
           </button>;
         })}
-        <button type="button" onClick={() => { setOpen(false); onManageMachines(); }} style={{ width: "100%", height: 32, border: 0, background: "var(--bg)", color: "var(--accent)", cursor: "pointer", font: "700 10px var(--font-mono)", textAlign: "left", padding: "0 8px" }}>Manage machines</button>
+        <button type="button" onClick={() => { setOpen(false); onManageMachines(); }} style={{ width: "100%", height: 32, border: 0, background: "var(--bg)", color: "var(--accent)", cursor: "pointer", font: "700 10px var(--font-mono)", textAlign: "left", padding: "0 8px" }}>{t("machineSwitcher.manageMachines")}</button>
       </div>}
     </div>
   );

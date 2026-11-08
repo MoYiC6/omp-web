@@ -1107,8 +1107,8 @@ function AppShellBody({ initialTarget, initialSession, resolutionRevision }: App
         {isAdminUser && (
           <button
             onClick={() => setServiceControlOpen(true)}
-            title="Service restart / upgrade"
-            aria-label="Service restart / upgrade"
+            title={translate("service.title")}
+            aria-label={translate("service.title")}
             style={{
               width: 44, height: 34, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
               background: "none", border: "1px solid var(--border)", borderRadius: 9,

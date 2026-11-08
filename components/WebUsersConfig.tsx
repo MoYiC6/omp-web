@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { copyText } from "@/lib/clipboard";
+import { useI18n } from "@/hooks/useI18n";
 import styles from "./SettingsConfig.module.css";
 
 type WebRole = "admin" | "user";
@@ -40,6 +41,7 @@ function userUrl(username: string, suffix = ""): string {
 }
 
 export function WebUsersConfig() {
+  const { t } = useI18n();
   const [users, setUsers] = useState<ListedUser[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -113,7 +115,7 @@ export function WebUsersConfig() {
     if (!username || !password || busy) return;
     const projects = parseProjectsText(projectsText);
     if (!projects) {
-      setError('projects must be "*" or one absolute path per line');
+      setError(t("webUsers.invalidProjects"));
       return;
     }
     setBusy(true);
@@ -134,7 +136,7 @@ export function WebUsersConfig() {
     if (!currentUser || busy) return;
     const projects = parseProjectsText(projectsText);
     if (!projects) {
-      setError('projects must be "*" or one absolute path per line');
+      setError(t("webUsers.invalidProjects"));
       return;
     }
     setBusy(true);
@@ -215,14 +217,14 @@ export function WebUsersConfig() {
       await copyText(rawToken.raw);
       setCopied(true);
     } catch {
-      setError("Copy failed — select the token text manually.");
+      setError(t("webUsers.copyFailed"));
     }
   };
 
   const roleSelect = () => (
     <select className={styles.select} value={role} onChange={(event) => setRole(event.target.value as WebRole)}>
-      <option value="user">user — sees only listed projects</option>
-      <option value="admin">admin — full access</option>
+      <option value="user">{t("webUsers.roleUser")}</option>
+      <option value="admin">{t("webUsers.roleAdmin")}</option>
     </select>
   );
 
@@ -241,7 +243,7 @@ export function WebUsersConfig() {
     if (role === "admin") {
       return (
         <div className={styles.readOnlyNotice}>
-          All machines (admin role) — an admin grant is implicit and not editable here.
+          {t("webUsers.adminMachines")}
         </div>
       );
     }
@@ -253,7 +255,7 @@ export function WebUsersConfig() {
             checked={machines === "*"}
             onChange={(event) => setMachines(event.target.checked ? "*" : [])}
           />
-          <span className={styles.serverName}>All machines (*)</span>
+          <span className={styles.serverName}>{t("webUsers.allMachines")}</span>
         </label>
         {machines !== "*" && (
           registry.length ? (
@@ -273,10 +275,10 @@ export function WebUsersConfig() {
                 </label>
               ))}
             </div>
-          ) : <div className={styles.saveState} style={{ marginTop: 4 }}>No remote machines registered yet.</div>
+          ) : <div className={styles.saveState} style={{ marginTop: 4 }}>{t("webUsers.noMachines")}</div>
         )}
         <div className={styles.saveState} style={{ marginTop: 6 }}>
-          The local machine is always reachable. A granted user acts with that machine&apos;s stored credential — full power on that machine; per-user project visibility does not apply on remotes; revoking a grant does not close already-open streams.
+          {t("webUsers.machineGrantHelp")}
         </div>
       </>
     );
@@ -285,14 +287,14 @@ export function WebUsersConfig() {
   return (
     <div className={styles.scrollContent}>
       <header className={styles.contentHeader}>
-        <h2 className={styles.contentTitle}>Web users</h2>
+        <h2 className={styles.contentTitle}>{t("webUsers.title")}</h2>
         <p className={styles.contentDescription}>
-          Accounts that can sign in to this omp-web instance. Admins manage users and see every project; user accounts only see the projects listed for them. Visibility is enforced server-side per request but is not a sandbox.
+          {t("webUsers.description")}
         </p>
       </header>
       <div className={styles.settingsBody}>
         {!users ? (
-          <div className={styles.empty}>{error ?? "Loading web users…"}</div>
+          <div className={styles.empty}>{error ?? t("webUsers.loading")}</div>
         ) : (
           <div className={styles.mcpLayout}>
             <aside className={styles.mcpList}>
@@ -306,7 +308,7 @@ export function WebUsersConfig() {
                     <button
                       type="button"
                       className={styles.serverSelect}
-                      title={`${user.role} · ${user.projects === "*" ? "all projects" : user.projects.length === 0 ? "no projects" : user.projects.length === 1 ? user.projects[0] : `${user.projects.length} projects`}`}
+                      title={t("webUsers.userSummary", { role: t(`webUsers.role.${user.role}`), projects: user.projects === "*" ? t("webUsers.allProjects") : user.projects.length === 0 ? t("webUsers.noProjects") : user.projects.length === 1 ? user.projects[0] : t("webUsers.projectCount", { count: user.projects.length }) })}
                       onClick={() => {
                         setCreating(false);
                         setSelected(user.username);
@@ -315,13 +317,13 @@ export function WebUsersConfig() {
                     >
                       <span className={styles.statusDot} data-off={user.role !== "admin"} />
                       <span className={styles.serverName}>{user.username}</span>
-                      {user.tokens.length > 0 && <span className={styles.sourceBadge}>{user.tokens.length} token{user.tokens.length === 1 ? "" : "s"}</span>}
-                      {user.envBacked && <span className={styles.sourceBadge}>env · read-only</span>}
+                      {user.tokens.length > 0 && <span className={styles.sourceBadge}>{t(user.tokens.length === 1 ? "webUsers.tokenCountOne" : "webUsers.tokenCount", { count: user.tokens.length })}</span>}
+                      {user.envBacked && <span className={styles.sourceBadge}>{t("webUsers.envReadOnly")}</span>}
                     </button>
                   </div>
-                )) : <div className={styles.serverListEmpty}>No users yet.</div>}
+                )) : <div className={styles.serverListEmpty}>{t("webUsers.noUsers")}</div>}
               </div>
-              <button type="button" className={styles.addServer} onClick={startCreate}>+ Add user</button>
+              <button type="button" className={styles.addServer} onClick={startCreate}>{t("webUsers.addUser")}</button>
             </aside>
             <section className={styles.mcpEditor}>
               {creating ? (
@@ -329,13 +331,13 @@ export function WebUsersConfig() {
                   <div className={styles.editorHeader}>
                     <input
                       className={styles.textInput}
-                      placeholder="username (lowercase a-z, 0-9, - or _)"
+                      placeholder={t("webUsers.usernamePlaceholder")}
                       value={newUsername}
                       spellCheck={false}
                       onChange={(event) => setNewUsername(event.target.value)}
                     />
                   </div>
-                  <div className={styles.settingLabel} style={{ marginTop: 10 }}>Password</div>
+                  <div className={styles.settingLabel} style={{ marginTop: 10 }}>{t("webUsers.password")}</div>
                   <input
                     type="password"
                     className={styles.textInput}
@@ -343,18 +345,18 @@ export function WebUsersConfig() {
                     autoComplete="new-password"
                     onChange={(event) => setPassword(event.target.value)}
                   />
-                  <div className={styles.settingLabel} style={{ marginTop: 10 }}>Role</div>
+                  <div className={styles.settingLabel} style={{ marginTop: 10 }}>{t("webUsers.role")}</div>
                   {roleSelect()}
-                  <div className={styles.settingLabel} style={{ marginTop: 10 }}>Projects</div>
+                  <div className={styles.settingLabel} style={{ marginTop: 10 }}>{t("webUsers.projects")}</div>
                   {projectsField()}
-                  <div className={styles.settingLabel} style={{ marginTop: 10 }}>Machines</div>
+                  <div className={styles.settingLabel} style={{ marginTop: 10 }}>{t("webUsers.machines")}</div>
                   {machinesField()}
                   <div className={styles.editorActions}>
                     <div>{error && <div className={styles.error}>{error}</div>}</div>
                     <div style={{ display: "flex", gap: 8 }}>
-                      <button type="button" className={styles.dangerButton} disabled={busy} onClick={() => setCreating(false)}>Cancel</button>
+                      <button type="button" className={styles.dangerButton} disabled={busy} onClick={() => setCreating(false)}>{t("webUsers.cancel")}</button>
                       <button type="button" className={styles.primaryButton} disabled={busy || !newUsername.trim() || !password} onClick={() => void createUser()}>
-                        {busy ? "Creating…" : "Create user"}
+                        {t(busy ? "webUsers.creating" : "webUsers.createUser")}
                       </button>
                     </div>
                   </div>
@@ -365,27 +367,27 @@ export function WebUsersConfig() {
                     <input className={styles.textInput} value={currentUser.username} readOnly />
                     {!currentUser.envBacked && (
                       <button type="button" className={styles.dangerButton} disabled={busy} onClick={() => void deleteUser()}>
-                        {confirmDelete ? "Confirm delete?" : "Delete"}
+                        {t(confirmDelete ? "webUsers.confirmDelete" : "webUsers.delete")}
                       </button>
                     )}
                   </div>
                   {currentUser.envBacked ? (
                     <div className={styles.readOnlyNotice}>
-                      Read-only · this account is backed by the OMP_WEB_PASSWORD environment variable (migration bridge). Create a file-backed admin here, then remove the env variable.
+                      {t("webUsers.envHelp")}
                     </div>
                   ) : (
                     <>
-                      <div className={styles.settingLabel}>Role</div>
+                      <div className={styles.settingLabel}>{t("webUsers.role")}</div>
                       {roleSelect()}
-                      <div className={styles.settingLabel} style={{ marginTop: 10 }}>Projects — one absolute path per line, or * for all</div>
+                      <div className={styles.settingLabel} style={{ marginTop: 10 }}>{t("webUsers.projectsHelp")}</div>
                       {projectsField()}
-                      <div className={styles.settingLabel} style={{ marginTop: 10 }}>Machines</div>
+                      <div className={styles.settingLabel} style={{ marginTop: 10 }}>{t("webUsers.machines")}</div>
                       {machinesField()}
-                      <div className={styles.settingLabel} style={{ marginTop: 10 }}>Reset password</div>
+                      <div className={styles.settingLabel} style={{ marginTop: 10 }}>{t("webUsers.resetPassword")}</div>
                       <input
                         type="password"
                         className={styles.textInput}
-                        placeholder="leave blank to keep the current password"
+                        placeholder={t("webUsers.passwordPlaceholder")}
                         value={password}
                         autoComplete="new-password"
                         onChange={(event) => setPassword(event.target.value)}
@@ -393,40 +395,40 @@ export function WebUsersConfig() {
                       <div className={styles.editorActions}>
                         <div>{error && <div className={styles.error}>{error}</div>}</div>
                         <button type="button" className={styles.primaryButton} disabled={busy} onClick={() => void saveUser()}>
-                          {busy ? "Saving…" : "Save user"}
+                          {t(busy ? "webUsers.saving" : "webUsers.saveUser")}
                         </button>
                       </div>
                     </>
                   )}
                   {!currentUser.envBacked && (
                     <div style={{ marginTop: 22 }}>
-                      <div className={styles.settingLabel}>API tokens</div>
-                      <div className={styles.saveState}>Bearer tokens for CLI access. The raw value is shown only once, at creation.</div>
+                      <div className={styles.settingLabel}>{t("webUsers.apiTokens")}</div>
+                      <div className={styles.saveState}>{t("webUsers.tokensHelp")}</div>
                       {currentUser.tokens.length ? currentUser.tokens.map((token) => (
                         <div key={token.name} className={styles.serverRow} style={{ justifyContent: "space-between", marginTop: 4 }}>
-                          <span className={styles.serverName} title={`created ${token.created}`}>{token.name}</span>
-                          <button type="button" className={styles.dangerButton} style={{ height: 25 }} disabled={busy} onClick={() => void revokeToken(token.name)}>Revoke</button>
+                          <span className={styles.serverName} title={t("webUsers.tokenCreatedAt", { created: token.created })}>{token.name}</span>
+                          <button type="button" className={styles.dangerButton} style={{ height: 25 }} disabled={busy} onClick={() => void revokeToken(token.name)}>{t("webUsers.revoke")}</button>
                         </div>
-                      )) : <div className={styles.saveState} style={{ marginTop: 4 }}>No tokens.</div>}
+                      )) : <div className={styles.saveState} style={{ marginTop: 4 }}>{t("webUsers.noTokens")}</div>}
                       <div className={styles.editorHeader} style={{ marginTop: 10 }}>
                         <input
                           className={styles.textInput}
-                          placeholder="token name"
+                          placeholder={t("webUsers.tokenName")}
                           value={tokenName}
                           spellCheck={false}
                           onChange={(event) => setTokenName(event.target.value)}
                         />
                         <button type="button" className={styles.primaryButton} disabled={busy || !tokenName.trim()} onClick={() => void createToken()}>
-                          Create token
+                          {t("webUsers.createToken")}
                         </button>
                       </div>
                       {rawToken && (
                         <div style={{ marginTop: 10, padding: 12, border: "1px solid var(--border)", borderRadius: 8 }}>
-                          <div className={styles.error}>Token “{rawToken.name}” created — store it now, it will not be shown again.</div>
+                          <div className={styles.error}>{t("webUsers.tokenCreated", { name: rawToken.name })}</div>
                           <div className={styles.editorHeader} style={{ marginTop: 8 }}>
                             <input className={styles.textInput} value={rawToken.raw} readOnly onFocus={(event) => event.currentTarget.select()} />
-                            <button type="button" className={styles.primaryButton} onClick={() => void copyRaw()}>{copied ? "Copied" : "Copy"}</button>
-                            <button type="button" className={styles.dangerButton} onClick={() => setRawToken(null)}>Dismiss</button>
+                            <button type="button" className={styles.primaryButton} onClick={() => void copyRaw()}>{t(copied ? "webUsers.copied" : "webUsers.copy")}</button>
+                            <button type="button" className={styles.dangerButton} onClick={() => setRawToken(null)}>{t("webUsers.dismiss")}</button>
                           </div>
                         </div>
                       )}
@@ -435,7 +437,7 @@ export function WebUsersConfig() {
                   {currentUser.envBacked && error && <div className={styles.error} style={{ marginTop: 10 }}>{error}</div>}
                 </>
               ) : (
-                <div className={styles.empty}>Select a user or add one.</div>
+                <div className={styles.empty}>{t("webUsers.selectUser")}</div>
               )}
             </section>
           </div>

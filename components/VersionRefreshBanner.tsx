@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { serverVersionFromHealth, shouldShowBanner } from "@/lib/version-check";
+import { useI18n } from "@/hooks/useI18n";
 
 /**
  * Version-staleness banner (issue #63). After a `.deb` upgrade the server
@@ -17,15 +18,16 @@ import { serverVersionFromHealth, shouldShowBanner } from "@/lib/version-check";
  * while hidden. Any fetch/parse failure is silent — the banner is a
  * convenience, not an error surface.
  *
- * Mounted from app/layout.tsx next to <PwaRegistration /> — outside the
- * `key={machineId}` app subtree (components/AppShell.tsx), so a machine
- * switch never tears it down. Purely client-side state (server version is
- * unknown until the first poll), so there is no hydration risk.
+ * Mounted from app/layout.tsx inside the root I18nProvider next to
+ * <PwaRegistration />, outside the `key={machineId}` app subtree, so a
+ * machine switch never tears it down. Purely client-side state (server
+ * version is unknown until the first poll), so there is no hydration risk.
  */
 
 const HEALTH_POLL_MS = 5 * 60 * 1000;
 
 export function VersionRefreshBanner() {
+  const { t } = useI18n();
   const [serverVersion, setServerVersion] = useState<string | null>(null);
   const [dismissedServerVersion, setDismissedServerVersion] = useState<string | null>(null);
 
@@ -117,7 +119,7 @@ export function VersionRefreshBanner() {
       }}
     >
       <span style={{ whiteSpace: "nowrap" }}>
-        omp-web updated:{" "}
+        {t("versionBanner.updated")}{" "}
         <span style={{ fontFamily: "var(--font-mono)" }}>
           {clientVersion} → {serverVersion}
         </span>
@@ -135,12 +137,12 @@ export function VersionRefreshBanner() {
           fontWeight: 600,
         }}
       >
-        Refresh
+        {t("versionBanner.refresh")}
       </button>
       <button
         onClick={() => setDismissedServerVersion(serverVersion)}
-        title="Dismiss"
-        aria-label="Dismiss"
+        title={t("versionBanner.dismiss")}
+        aria-label={t("versionBanner.dismiss")}
         style={{
           padding: "2px 6px",
           border: 0,

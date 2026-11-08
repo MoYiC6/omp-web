@@ -12,6 +12,7 @@ type HealthState = {
   state: "loading" | "online" | "offline" | "unauthorized";
   health?: MachineHealth;
   reason?: string;
+  reasonKey?: string;
 };
 
 type MachineForm = {
@@ -78,11 +79,11 @@ function endpointDotColor(healthy: boolean | null): string {
   return healthy ? "var(--success)" : "var(--danger)";
 }
 
-function statusLabel(status: HealthState | undefined): string {
-  if (!status || status.state === "loading") return "Checking…";
-  if (status.state === "online") return "Online";
-  if (status.state === "unauthorized") return "Unauthorized";
-  return "Offline";
+function statusKey(status: HealthState | undefined): string {
+  if (!status || status.state === "loading") return "machines.status.checking";
+  if (status.state === "online") return "machines.status.online";
+  if (status.state === "unauthorized") return "machines.status.unauthorized";
+  return "machines.status.offline";
 }
 
 function statusColor(status: HealthState | undefined): string {
@@ -97,26 +98,27 @@ async function fetchHealth(machine: SafeMachine, signal: AbortSignal): Promise<H
     const response = await fetch(apiPath("/api/health", machine.id), { cache: "no-store", signal });
     const body = await response.json().catch(() => ({})) as MachineHealth & { error?: string };
     if (response.status === 401 || response.status === 403) {
-      return { state: "unauthorized", reason: body.error ?? "The machine rejected its configured credential." };
+      return { state: "unauthorized", ...(body.error != null ? { reason: body.error } : { reasonKey: "machines.credentialRejected" }) };
     }
     if (!response.ok || body.ok !== true) {
       return { state: "offline", reason: body.error ?? `HTTP ${response.status}` };
     }
     return { state: "online", health: body };
   } catch (caught) {
-    return { state: "offline", reason: caught instanceof DOMException && caught.name === "AbortError" ? "Connection timed out." : errorMessage(caught) };
+    return { state: "offline", ...(caught instanceof DOMException && caught.name === "AbortError" ? { reasonKey: "machines.connectionTimedOut" } : { reason: errorMessage(caught) }) };
   }
 }
 
-function versionLabel(label: string, remote: string | null, local: string | null): React.ReactNode {
-  if (!remote) return <span>{label} unavailable</span>;
-  const drift = local !== null && local !== remote;
-  return <span style={{ color: drift ? "var(--warning)" : "var(--text-dim)" }}>{label} {remote}{drift ? ` · local ${local}` : ""}</span>;
-}
 
 export function MachinesConfig() {
   const { refreshMachines } = useMachines();
   const { t } = useI18n();
+
+  const versionLabel = (label: string, remote: string | null, local: string | null): React.ReactNode => {
+    if (!remote) return <span>{t("machines.versionUnavailable", { label })}</span>;
+    const drift = local !== null && local !== remote;
+    return <span style={{ color: drift ? "var(--warning)" : "var(--text-dim)" }}>{t(drift ? "machines.versionDriftLabel" : "machines.versionLabel", { label, remote, local: local ?? "" })}</span>;
+  };
   const [machines, setMachines] = useState<SafeMachine[] | null>(null);
   const [health, setHealth] = useState<Record<string, HealthState>>({});
   const [selected, setSelected] = useState<string | null>(null);
@@ -203,15 +205,15 @@ export function MachinesConfig() {
     const fallbackUrls = parseFallbackUrls(form.fallbackUrlsText);
     const headers = parseHeaders(form.headersText);
     if (!name || !baseUrl) {
-      setError("Name and base URL are required.");
+      setError(t("machines.nameUrlRequired"));
       return null;
     }
     if (headers === null) {
-      setError("Static headers must use one Name: value pair per line.");
+      setError(t("machines.invalidHeaders"));
       return null;
     }
     if (form.authMode !== "none" && creating && !form.credential) {
-      setError("A credential is required for bearer and basic authentication.");
+      setError(t("machines.credentialRequired"));
       return null;
     }
     return {
@@ -246,8 +248,8 @@ export function MachinesConfig() {
       setTestResult(result.ok && result.health
         ? { state: "online", health: result.health }
         : result.code === "machine_unauthorized"
-          ? { state: "unauthorized", reason: result.error ?? "The machine rejected this credential." }
-          : { state: "offline", reason: result.error ?? result.code ?? "Connection test failed." });
+          ? { state: "unauthorized", ...(result.error != null ? { reason: result.error } : { reasonKey: "machines.testCredentialRejected" }) }
+          : { state: "offline", ...((result.error ?? result.code) != null ? { reason: result.error ?? result.code } : { reasonKey: "machines.connectionTestFailed" }) });
     } catch (caught) {
       setTestResult({ state: "offline", reason: errorMessage(caught) });
     } finally {
@@ -259,7 +261,7 @@ export function MachinesConfig() {
     const payload = formPayload();
     if (!payload || busy) return;
     if (testResult && testResult.state !== "online") {
-      setError("Saved anyway — the last connection test did not succeed.");
+      setError(t("machines.savedAnyway"));
     }
     setBusy(true);
     setError(null);
@@ -306,11 +308,11 @@ export function MachinesConfig() {
   return (
     <div className={styles.scrollContent}>
       <header className={styles.contentHeader}>
-        <h2 className={styles.contentTitle}>Machines</h2>
-        <p className={styles.contentDescription}>Connect this gateway to other omp-web instances. Credentials are write-only and remain on this gateway.</p>
+        <h2 className={styles.contentTitle}>{t("machines.title")}</h2>
+        <p className={styles.contentDescription}>{t("machines.description")}</p>
       </header>
       <div className={styles.settingsBody}>
-        {!machines ? <div className={styles.empty}>{error ?? "Loading machines…"}</div> : (
+        {!machines ? <div className={styles.empty}>{error ?? t("machines.loading")}</div> : (
           <div className={styles.mcpLayout}>
             <aside className={styles.mcpList}>
               <div className={styles.serverRows}>
@@ -325,73 +327,73 @@ export function MachinesConfig() {
                           <span>{machine.name}</span>
                           <span title={machine.baseUrl} style={{ color: "var(--text-dim)", fontSize: 9 }}>{machine.baseUrl}</span>
                         </span>
-                        <span className={styles.sourceBadge}>{machine.authMode}</span>
-                        <span className={styles.sourceBadge} style={{ color: statusColor(machineHealth) }}>{statusLabel(machineHealth)}</span>
-                        {onFallback && <span className={styles.sourceBadge} style={{ color: "var(--warning)" }} title={`Serving over fallback: ${machine.activeUrl}`}>on fallback</span>}
-                        {machine.isLocal ? <span className={styles.sourceBadge}>local</span> : machineHealth?.health && localHealth && (machineHealth.health.ompVersion !== localHealth.ompVersion || machineHealth.health.ompWebVersion !== localHealth.ompWebVersion) && <span className={styles.sourceBadge} style={{ color: "var(--warning)" }}>version drift</span>}
+                        <span className={styles.sourceBadge}>{t(`machines.authMode.${machine.authMode}`)}</span>
+                        <span className={styles.sourceBadge} style={{ color: statusColor(machineHealth) }}>{t(statusKey(machineHealth))}</span>
+                        {onFallback && <span className={styles.sourceBadge} style={{ color: "var(--warning)" }} title={t("machines.servingFallback", { url: machine.activeUrl })}>{t("machines.onFallback")}</span>}
+                        {machine.isLocal ? <span className={styles.sourceBadge}>{t("machines.local")}</span> : machineHealth?.health && localHealth && (machineHealth.health.ompVersion !== localHealth.ompVersion || machineHealth.health.ompWebVersion !== localHealth.ompWebVersion) && <span className={styles.sourceBadge} style={{ color: "var(--warning)" }}>{t("machines.versionDrift")}</span>}
                       </button>
                     </div>
                   );
                 })}
               </div>
-              <button type="button" className={styles.addServer} onClick={startCreate}>+ Add machine</button>
+              <button type="button" className={styles.addServer} onClick={startCreate}>{t("machines.addMachineButton")}</button>
             </aside>
             <section className={styles.mcpEditor}>
               {creating || (currentMachine && !currentMachine.isLocal) ? <>
                 <div className={styles.editorHeader}>
-                  <input className={styles.textInput} placeholder="machine name" value={form.name} spellCheck={false} onChange={(event) => updateForm("name", event.target.value)} />
-                  {!creating && <button type="button" className={styles.dangerButton} disabled={busy} onClick={() => void deleteMachine()}>{confirmDelete ? "Confirm delete?" : "Delete"}</button>}
+                  <input className={styles.textInput} placeholder={t("machines.namePlaceholder")} value={form.name} spellCheck={false} onChange={(event) => updateForm("name", event.target.value)} />
+                  {!creating && <button type="button" className={styles.dangerButton} disabled={busy} onClick={() => void deleteMachine()}>{t(confirmDelete ? "machines.confirmDelete" : "machines.delete")}</button>}
                 </div>
-                <div className={styles.settingLabel}>Base URL</div>
+                <div className={styles.settingLabel}>{t("machines.baseUrl")}</div>
                 <input className={styles.textInput} placeholder="https://omp.example.test" value={form.baseUrl} spellCheck={false} onChange={(event) => updateForm("baseUrl", event.target.value)} />
-                <div className={styles.settingLabel} style={{ marginTop: 10 }}>Fallback URLs (one per line, tried in order if the base URL is unreachable)</div>
+                <div className={styles.settingLabel} style={{ marginTop: 10 }}>{t("machines.fallbackUrls")}</div>
                 <textarea className={styles.jsonEditor} style={{ minHeight: 56 }} value={form.fallbackUrlsText} placeholder="https://omp-fallback.example.test" spellCheck={false} onChange={(event) => updateForm("fallbackUrlsText", event.target.value)} />
-                <div className={styles.settingLabel} style={{ marginTop: 10 }}>Authentication</div>
+                <div className={styles.settingLabel} style={{ marginTop: 10 }}>{t("machines.authentication")}</div>
                 <select className={styles.select} value={form.authMode} onChange={(event) => updateForm("authMode", event.target.value as MachineAuthMode)}>
-                  <option value="bearer">Bearer token</option><option value="basic">Basic authentication</option><option value="none">No authentication</option>
+                  <option value="bearer">{t("machines.bearerToken")}</option><option value="basic">{t("machines.basicAuthentication")}</option><option value="none">{t("machines.noAuthentication")}</option>
                 </select>
-                {form.authMode === "basic" && <><div className={styles.settingLabel} style={{ marginTop: 10 }}>Basic username</div><input className={styles.textInput} value={form.username} placeholder={creating ? "omp" : "leave blank to keep the current username"} spellCheck={false} onChange={(event) => updateForm("username", event.target.value)} /></>}
-                {form.authMode !== "none" && <><div className={styles.settingLabel} style={{ marginTop: 10 }}>{form.authMode === "basic" ? "Basic password" : "Bearer token"}</div><input type="password" className={styles.textInput} value={form.credential} placeholder={creating ? "credential" : "leave blank to keep the current credential"} autoComplete="new-password" onChange={(event) => updateForm("credential", event.target.value)} /></>}
-                <div className={styles.settingLabel} style={{ marginTop: 10 }}>Static headers</div>
-                <textarea className={styles.jsonEditor} style={{ minHeight: 72 }} value={form.headersText} placeholder={creating ? "X-Example: value" : "leave blank to keep current headers"} spellCheck={false} onChange={(event) => updateForm("headersText", event.target.value)} />
-                {currentMachine?.headerNames.length ? <div className={styles.saveState}>Configured header names: {currentMachine.headerNames.join(", ")}.</div> : null}
-                {currentMachine?.hasCredential && !creating && <div className={styles.saveState}>A credential is configured for this machine. It is never shown here.</div>}
+                {form.authMode === "basic" && <><div className={styles.settingLabel} style={{ marginTop: 10 }}>{t("machines.basicUsername")}</div><input className={styles.textInput} value={form.username} placeholder={creating ? "omp" : t("machines.usernamePlaceholder")} spellCheck={false} onChange={(event) => updateForm("username", event.target.value)} /></>}
+                {form.authMode !== "none" && <><div className={styles.settingLabel} style={{ marginTop: 10 }}>{t(form.authMode === "basic" ? "machines.basicPassword" : "machines.bearerToken")}</div><input type="password" className={styles.textInput} value={form.credential} placeholder={t(creating ? "machines.credential" : "machines.credentialPlaceholder")} autoComplete="new-password" onChange={(event) => updateForm("credential", event.target.value)} /></>}
+                <div className={styles.settingLabel} style={{ marginTop: 10 }}>{t("machines.staticHeaders")}</div>
+                <textarea className={styles.jsonEditor} style={{ minHeight: 72 }} value={form.headersText} placeholder={creating ? "X-Example: value" : t("machines.headersPlaceholder")} spellCheck={false} onChange={(event) => updateForm("headersText", event.target.value)} />
+                {currentMachine?.headerNames.length ? <div className={styles.saveState}>{t("machines.configuredHeaders", { names: currentMachine.headerNames.join(", ") })}</div> : null}
+                {currentMachine?.hasCredential && !creating && <div className={styles.saveState}>{t("machines.credentialConfigured")}</div>}
                 {testResult && <div role={testResult.state === "online" ? "status" : "alert"} className={testResult.state === "online" ? styles.saveState : styles.error} style={{ marginTop: 10 }}>
-                  {statusLabel(testResult)}{testResult.reason ? ` · ${testResult.reason}` : ""}
+                  {t(testResult.reason || testResult.reasonKey ? "machines.statusWithReason" : "machines.statusLabel", { status: t(statusKey(testResult)), reason: testResult.reasonKey ? t(testResult.reasonKey) : testResult.reason ?? "" })}
                 </div>}
                 <div className={styles.editorActions}>
                   <div>{error && <div className={styles.error}>{error}</div>}</div>
                   <div style={{ display: "flex", gap: 8 }}>
-                    <button type="button" className={styles.dangerButton} disabled={busy} onClick={() => { setCreating(false); setSelected(currentMachine?.id ?? "local"); }}>Cancel</button>
-                    <button type="button" className={styles.dangerButton} disabled={busy} onClick={() => void testConnection()}>{busy ? "Testing…" : "Test connection"}</button>
-                    <button type="button" className={styles.primaryButton} disabled={busy} onClick={() => void saveMachine()}>{busy ? "Saving…" : creating ? "Add machine" : "Save machine"}</button>
+                    <button type="button" className={styles.dangerButton} disabled={busy} onClick={() => { setCreating(false); setSelected(currentMachine?.id ?? "local"); }}>{t("machines.cancel")}</button>
+                    <button type="button" className={styles.dangerButton} disabled={busy} onClick={() => void testConnection()}>{t(busy ? "machines.testing" : "machines.testConnection")}</button>
+                    <button type="button" className={styles.primaryButton} disabled={busy} onClick={() => void saveMachine()}>{t(busy ? "machines.saving" : creating ? "machines.addMachine" : "machines.saveMachine")}</button>
                   </div>
                 </div>
               </> : currentMachine ? <>
                 <div className={styles.editorHeader}><input className={styles.textInput} value={currentMachine.name} readOnly /></div>
-                <div className={styles.readOnlyNotice}>This is the gateway machine. It is always available locally and cannot be edited or deleted.</div>
-                <div className={styles.serverRow} style={{ marginTop: 10 }}><span className={styles.statusDot} style={{ background: statusColor(health.local) }} /><span className={styles.serverName}>{statusLabel(health.local)}</span></div>
-              </> : <div className={styles.empty}>Select a machine or add one.</div>}
+                <div className={styles.readOnlyNotice}>{t("machines.gatewayNotice")}</div>
+                <div className={styles.serverRow} style={{ marginTop: 10 }}><span className={styles.statusDot} style={{ background: statusColor(health.local) }} /><span className={styles.serverName}>{t(statusKey(health.local))}</span></div>
+              </> : <div className={styles.empty}>{t("machines.selectMachine")}</div>}
               {currentMachine && <div style={{ marginTop: 18, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
-                <div className={styles.settingLabel}>Connection status</div>
+                <div className={styles.settingLabel}>{t("machines.connectionStatus")}</div>
                 <div className={styles.saveState}>{currentMachine.baseUrl}</div>
-                <div style={{ marginTop: 7, display: "flex", alignItems: "center", gap: 7, font: "10px var(--font-mono)", color: statusColor(health[currentMachine.id]) }}><span className={styles.statusDot} style={{ background: statusColor(health[currentMachine.id]) }} />{statusLabel(health[currentMachine.id])}</div>
-                {health[currentMachine.id]?.reason && <div className={styles.error} style={{ marginTop: 5 }}>{health[currentMachine.id].reason}</div>}
+                <div style={{ marginTop: 7, display: "flex", alignItems: "center", gap: 7, font: "10px var(--font-mono)", color: statusColor(health[currentMachine.id]) }}><span className={styles.statusDot} style={{ background: statusColor(health[currentMachine.id]) }} />{t(statusKey(health[currentMachine.id]))}</div>
+                {(health[currentMachine.id]?.reason || health[currentMachine.id]?.reasonKey) && <div className={styles.error} style={{ marginTop: 5 }}>{health[currentMachine.id].reasonKey ? t(health[currentMachine.id].reasonKey!) : health[currentMachine.id].reason}</div>}
                 {health[currentMachine.id]?.health && <div style={{ marginTop: 7, display: "flex", flexDirection: "column", gap: 3, font: "10px var(--font-mono)" }}>
                   {versionLabel("omp-web", health[currentMachine.id].health?.ompWebVersion ?? null, localHealth?.ompWebVersion ?? null)}
                   {versionLabel("omp", health[currentMachine.id].health?.ompVersion ?? null, localHealth?.ompVersion ?? null)}
                 </div>}
                 {!currentMachine.isLocal && currentMachine.endpoints.length > 1 && <div style={{ marginTop: 10 }}>
-                  <div className={styles.settingLabel}>Endpoints</div>
+                  <div className={styles.settingLabel}>{t("machines.endpoints")}</div>
                   {currentMachine.activeUrl !== currentMachine.baseUrl && <div role="status" className={styles.saveState} style={{ color: "var(--warning)", marginTop: 4 }}>
-                    On fallback — serving from {currentMachine.activeUrl}
+                    {t("machines.fallbackServingFrom", { url: currentMachine.activeUrl })}
                   </div>}
                   <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 3, font: "10px var(--font-mono)" }}>
                     {currentMachine.endpoints.map((endpoint, index) => (
                       <div key={endpoint.url} style={{ display: "flex", alignItems: "center", gap: 7 }}>
                         <span className={styles.statusDot} style={{ background: endpointDotColor(endpoint.healthy) }} />
                         <span style={{ color: endpoint.url === currentMachine.activeUrl ? "var(--text)" : "var(--text-dim)" }}>
-                          {endpoint.url} {index === 0 ? "(primary)" : "(fallback)"}{endpoint.url === currentMachine.activeUrl ? " · active" : ""}
+                          {t(endpoint.url === currentMachine.activeUrl ? "machines.activeEndpoint" : "machines.endpoint", { url: endpoint.url, type: t(index === 0 ? "machines.primaryEndpoint" : "machines.fallbackEndpoint") })}
                         </span>
                       </div>
                     ))}
