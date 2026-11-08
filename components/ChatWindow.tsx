@@ -236,7 +236,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
     agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, modelRoles, toolPreset, thinkingLevel,
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, modelSwitching, sessionStats,
-    slashCommands, slashCommandsLoading, queuedMessages, subagents, planMode,
+    slashCommands, slashCommandsLoading, queuedMessages, subagents, planMode, goal,
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection,
     agentPhase,
@@ -245,7 +245,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange, handleRoleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
-    handleBuiltinSlashCommand, handleSetPlanMode,
+    handleBuiltinSlashCommand, handleSetPlanMode, handleGoalAction,
     handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, uploadSessionFiles,
   } = useAgentSession({
     session, newSessionCwd, onAgentEnd: wrappedOnAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSessionRenamed,
@@ -435,6 +435,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
       onBuiltinCommand={handleBuiltinSlashCommand}
       planMode={planMode}
       onSetPlanMode={handleSetPlanMode}
+      goal={goal}
+      onGoalAction={handleGoalAction}
       soundEnabled={soundEnabled}
       onSoundToggle={onSoundToggle}
       onAudioUnlock={unlockAudio}

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useRef, useState, useCallback, useEffect, useImperativeHandle, forwardRef, KeyboardEvent } from "react";
-import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, SessionUploadResult } from "@/hooks/useAgentSession";
+import type { BuiltinSlashCommandResult, CompactResultInfo, GoalAction, QueuedMessages, SessionUploadResult } from "@/hooks/useAgentSession";
 import type { ModelRoleAssignment, SkillsResponse } from "@/lib/api-types";
 import type { ContextUsage, SlashCommandInfo } from "@/lib/omp-types";
 import type { TextContent, UserMessage } from "@/lib/types";
@@ -33,6 +33,7 @@ import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
 import { PRESET_DEFAULT, PRESET_FULL } from "@/lib/tool-presets";
+import { formatGoalDuration, parseGoalBudget, type WebGoalInfo, type WebGoalStatus } from "@/lib/goal-web";
 
 export interface AttachedImage {
   data: string;   // base64, no prefix
@@ -92,6 +93,9 @@ interface Props {
   /** Current session mode (plan mode vs normal execution) and toggle. */
   planMode?: { enabled: boolean; planFilePath?: string; available: boolean } | null;
   onSetPlanMode?: (enabled: boolean) => void;
+  /** Goal mode state and controls; the bar shows only while a goal exists. */
+  goal?: WebGoalInfo | null;
+  onGoalAction?: (action: GoalAction) => void;
   soundEnabled?: boolean;
   onSoundToggle?: () => void;
   onAudioUnlock?: () => void;
@@ -477,7 +481,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   retryInfo, queuedMessages, inputHistory = [], onRecallQueue,
   slashCommands, slashCommandsLoading, onLoadSlashCommands,
   onBuiltinCommand,
-  planMode, onSetPlanMode,
+  planMode, onSetPlanMode, goal, onGoalAction,
   soundEnabled, onSoundToggle, onAudioUnlock,
   onPromptWithStreamingBehavior,
   draftKey,
@@ -2407,6 +2411,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               {planModePlanFile.split("/").pop()}
             </span>
           )}
+          {goal?.goal && <GoalStatusBar info={goal} onAction={onGoalAction} t={t} />}
         </div>
 
         {/* Bash mode status label */}
@@ -3180,6 +3185,109 @@ function getContextPercent(usage: ContextUsage): number | null {
     return (usage.tokens / usage.contextWindow) * 100;
   }
   return null;
+}
+
+const GOAL_STATUS_KEYS: Record<WebGoalStatus, string> = {
+  active: "chat.goalStatusActive",
+  paused: "chat.goalStatusPaused",
+  "budget-limited": "chat.goalStatusBudgetLimited",
+  complete: "chat.goalStatusComplete",
+  dropped: "chat.goalStatusDropped",
+};
+
+/** One-line objective: guided goals are markdown with `## Objective`-style headings. */
+function goalObjectiveSummary(objective: string): string {
+  return objective.replace(/^#{1,6}\s.*$/gm, " ").replace(/\s+/g, " ").trim() || objective.trim();
+}
+
+/** Goal mode status and controls (the TUI's goal footer and `/goal` menu). */
+function GoalStatusBar({
+  info,
+  onAction,
+  t,
+}: {
+  info: WebGoalInfo;
+  onAction?: (action: GoalAction) => void;
+  t: (key: string, params?: Record<string, string | number>) => string;
+}) {
+  const goal = info.goal;
+  if (!goal) return null;
+  const active = info.enabled && goal.status === "active";
+  const statusLabel = info.enabled ? t(GOAL_STATUS_KEYS[goal.status]) : t("chat.goalStatusPaused");
+  const tokens = goal.tokenBudget !== undefined
+    ? `${goal.tokensUsed.toLocaleString()} / ${goal.tokenBudget.toLocaleString()}`
+    : goal.tokensUsed.toLocaleString();
+  const editBudget = () => {
+    const raw = window.prompt(t("chat.goalBudgetPrompt"), goal.tokenBudget !== undefined ? String(goal.tokenBudget) : "");
+    if (raw === null || !raw.trim()) return;
+    const tokenBudget = parseGoalBudget(raw);
+    if (tokenBudget === undefined) {
+      window.alert(t("chat.goalBudgetInvalid"));
+      return;
+    }
+    onAction?.({ op: "budget", tokenBudget });
+  };
+  const actionButton = (label: string, onClick: () => void) => (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        padding: "1px 7px",
+        border: "1px solid var(--border)",
+        borderRadius: 999,
+        background: "none",
+        color: "var(--text-muted)",
+        fontSize: 10.5,
+        cursor: "pointer",
+      }}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap", minWidth: 0 }}>
+      <span
+        title={goal.objective}
+        style={{
+          display: "inline-flex", alignItems: "center", gap: 5,
+          padding: "3px 10px",
+          border: `1px solid ${active ? "color-mix(in srgb, var(--success) 45%, transparent)" : "var(--border)"}`,
+          borderRadius: 999,
+          background: active ? "color-mix(in srgb, var(--success) 12%, transparent)" : "none",
+          color: active ? "var(--success)" : "var(--text-muted)",
+          fontSize: 11, fontWeight: 600, letterSpacing: "0.01em",
+        }}
+      >
+        <span
+          aria-hidden
+          style={{
+            width: 6, height: 6, borderRadius: 999, flexShrink: 0,
+            background: active ? "var(--success)" : "var(--text-muted)",
+          }}
+        />
+        {t("chat.goal")} · {statusLabel}
+      </span>
+      <span
+        title={goal.objective}
+        style={{ fontSize: 11, color: "var(--text-muted)", maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+      >
+        {goalObjectiveSummary(goal.objective)}
+      </span>
+      <span style={{ fontSize: 10.5, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
+        {tokens} · {formatGoalDuration(goal.timeUsedSeconds)}
+      </span>
+      {onAction && (
+        <>
+          {actionButton(t("chat.goalDetails"), () => onAction({ op: "show" }))}
+          {info.enabled
+            ? actionButton(t("chat.goalPause"), () => onAction({ op: "pause" }))
+            : actionButton(t("chat.goalResume"), () => onAction({ op: "resume" }))}
+          {info.enabled && goal.status !== "complete" && actionButton(t("chat.goalBudget"), editBudget)}
+          {actionButton(t("chat.goalDrop"), () => onAction({ op: "drop" }))}
+        </>
+      )}
+    </span>
+  );
 }
 
 function ContextUsageMeter({

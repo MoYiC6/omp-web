@@ -22,6 +22,7 @@ import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { ContextUsage, SessionStatsInfo, SlashCommandInfo } from "@/lib/omp-types";
 import type { ModelRoleAssignment } from "@/lib/api-types";
 import { planModeTransitionErrorMessage, planSlashCommandIntent, planSlashCommandOutcome, type WebPlanModeInfo } from "@/lib/plan-mode-web";
+import { formatGoalDetails, parseGoalSlashCommand, webGoalInfo, type WebGoalInfo, type WebGoalOp } from "@/lib/goal-web";
 
 export interface SessionData {
   sessionId: string;
@@ -31,6 +32,7 @@ export interface SessionData {
   leafId: string | null;
   contextUsage?: ContextUsage;
   planMode?: WebPlanModeInfo;
+  goal?: WebGoalInfo;
   context: {
     messages: AgentMessage[];
     entryIds: string[];
@@ -91,6 +93,7 @@ type AgentStateResponse = {
   queuedMessages?: { steering?: string[]; followUp?: string[] } | null;
   subagents?: SubagentSnapshot[];
   planMode?: WebPlanModeInfo | null;
+  goal?: WebGoalInfo | null;
 };
 
 export interface QueuedMessages {
@@ -158,6 +161,14 @@ export type BuiltinSlashCommandResult =
   | { handled: false }
   | { handled: true; message?: string; error?: string; prompt?: string; action?: "openSessionStats" | "openSettings" };
 
+/** Goal controls shared by `/goal` subcommands and the composer's goal bar. */
+export type GoalAction =
+  | { op: "show" }
+  | { op: "pause" }
+  | { op: "resume" }
+  | { op: "drop" }
+  | { op: "budget"; tokenBudget: number | null };
+
 /**
  * Builtins the SDK ships with only a TUI handler and omp-web has no equivalent
  * for: say where the browser offers the same thing instead of sending the
@@ -171,6 +182,19 @@ const TUI_ONLY_COMMAND_HINTS: Record<string, string> = {
   fork: "/fork is terminal-only: use the Fork button on a user message instead.",
   "plan-review": "/plan-review is terminal-only: the plan review opens when the agent proposes a plan.",
 };
+
+function goalActionMessage(action: Exclude<GoalAction, { op: "show" }>): string {
+  switch (action.op) {
+    case "pause":
+      return "Goal paused.";
+    case "resume":
+      return "Goal mode resumed.";
+    case "drop":
+      return "Goal dropped.";
+    case "budget":
+      return action.tokenBudget === null ? "Goal budget cleared." : `Goal budget set to ${action.tokenBudget.toLocaleString()}.`;
+  }
+}
 
 export interface UseAgentSessionOptions {
   session: SessionInfo | null;
@@ -447,6 +471,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessages>({ steering: [], followUp: [] });
   const [subagents, setSubagents] = useState<SubagentSnapshot[]>([]);
   const [planMode, setPlanMode] = useState<WebPlanModeInfo | null>(null);
+  const [goal, setGoal] = useState<WebGoalInfo | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const eventSourceSessionIdRef = useRef<string | null>(null);
   const eventConnectionAttemptRef = useRef<EventStreamConnectionAttempt | null>(null);
@@ -555,6 +580,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setData(d);
       setContextUsage(d.contextUsage ?? null);
       setPlanMode(d.planMode ?? null);
+      setGoal(d.goal ?? null);
       setMessages(d.context.messages);
       setEntryIds(d.context.entryIds ?? []);
       setPlanMode(d.planMode ?? null);
@@ -582,6 +608,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (liveState.extensionStatuses !== undefined) setExtensionStatuses(liveState.extensionStatuses ?? []);
           if (liveState.extensionWidgets !== undefined) setExtensionWidgets(liveState.extensionWidgets ?? []);
           if (liveState.planMode !== undefined) setPlanMode(liveState.planMode ?? null);
+          if (liveState.goal !== undefined) setGoal(liveState.goal ?? null);
           if (liveState.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(liveState.queuedMessages));
           if (liveState.subagents !== undefined) setSubagents((current) => mergeSubagentSnapshots(current, liveState.subagents ?? []));
         } else if (!agentState.running) {
@@ -1185,6 +1212,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (state?.contextUsage !== undefined) setContextUsage(state.contextUsage ?? null);
       setSubagents((current) => mergeSubagentSnapshots(current, state?.subagents ?? []));
       if (state?.planMode !== undefined) setPlanMode(state.planMode ?? null);
+      if (state?.goal !== undefined) setGoal(state.goal ?? null);
       const busy = data.running && state
         && (state.isStreaming || state.isPromptRunning || state.isCompacting);
       if (busy || !agentRunningRef.current) return;
@@ -1288,6 +1316,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               if (d.state?.extensionWidgets !== undefined) setExtensionWidgets(d.state.extensionWidgets ?? []);
               if (d.state?.subagents !== undefined) setSubagents((current) => mergeSubagentSnapshots(current, d.state?.subagents ?? []));
               if (d.state?.planMode !== undefined) setPlanMode(d.state.planMode ?? null);
+              if (d.state?.goal !== undefined) setGoal(d.state.goal ?? null);
               // Aborted turns can leave messages queued in pi (delivered with the
               // next turn); dead wrapper (no state) means the queue is gone.
               setQueuedMessages(normalizeQueuedMessages(d.state?.queuedMessages));
@@ -1355,6 +1384,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           ...(planFilePath ? { planFilePath } : {}),
           available: prev?.available ?? true,
         }));
+        break;
+      }
+      case "goal_updated": {
+        // Goal changes from a command in any tab or from the agent's `goal`
+        // tool. Completion clears the goal at the turn's end, which the
+        // agent_end state refresh picks up (no event is emitted for it).
+        const state = event.state as { enabled: boolean; goal: unknown } | undefined;
+        setGoal((prev) => webGoalInfo(state, prev?.available ?? true));
         break;
       }
       case "session_renamed": {
@@ -1978,6 +2015,44 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [addNotice, ensureNewSession]);
 
 
+  const runGoalCommand = useCallback(async (
+    sid: string,
+    command: { op: WebGoalOp; objective?: string; tokenBudget?: number | null },
+  ): Promise<WebGoalInfo> => {
+    // These ops can start a turn server-side (goal continuation, guided
+    // interview) that no prompt of ours announces: listen before sending.
+    if (command.op === "resume" || command.op === "budget" || command.op === "guided") {
+      await ensureEventsConnected(sid).catch(() => {});
+    }
+    const result = await sendAgentCommand<{ goal: WebGoalInfo }>(sid, { type: "goal", ...command });
+    setGoal(result.goal);
+    return result.goal;
+  }, [ensureEventsConnected]);
+
+  /** Runs one goal action; resolves to a success message, or null when there is nothing to report. Throws on failure. */
+  const performGoalAction = useCallback(async (sid: string, action: GoalAction): Promise<string | null> => {
+    if (action.op === "show") {
+      appendCommandOutput(formatGoalDetails(await runGoalCommand(sid, { op: "get" })));
+      return null;
+    }
+    if (action.op === "drop" && !window.confirm("Drop goal?\n\nThis removes the goal record. Accumulated usage stays in the session log.")) {
+      return null;
+    }
+    await runGoalCommand(sid, action);
+    return goalActionMessage(action);
+  }, [appendCommandOutput, runGoalCommand]);
+
+  const handleGoalAction = useCallback(async (action: GoalAction) => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    try {
+      const message = await performGoalAction(sid, action);
+      if (message) addNotice({ type: "success", message });
+    } catch (e) {
+      addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
+    }
+  }, [addNotice, performGoalAction]);
+
   const handleBuiltinSlashCommand = useCallback(async (text: string): Promise<BuiltinSlashCommandResult> => {
     if (!text.startsWith("/")) return { handled: false };
     const match = text.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/);
@@ -2063,6 +2138,44 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           return planSlashCommandOutcome(intent, transitionError);
         }
 
+        case "goal": {
+          // TUI-only in the SDK; web goal mode runs on the server's goal
+          // controller (lib/goal-session.ts).
+          if (!sid) return complete({ handled: true, error: "No active session" });
+          const request = parseGoalSlashCommand(args);
+          switch (request.kind) {
+            case "invalid":
+              return complete({ handled: true, error: request.error });
+            case "menu": {
+              const info = await runGoalCommand(sid, { op: "get" });
+              if (!info.goal) {
+                return complete({ handled: true, error: "Usage: /goal <objective>, or /guided-goal to draft one with the agent." });
+              }
+              appendCommandOutput(formatGoalDetails(info));
+              return { handled: true };
+            }
+            case "create":
+            case "set":
+              await runGoalCommand(sid, { op: request.kind, objective: request.objective });
+              // As in the TUI, the objective is submitted as the user's prompt.
+              return { handled: true, prompt: request.objective };
+            case "budget": {
+              const message = await performGoalAction(sid, { op: "budget", tokenBudget: request.tokenBudget });
+              return message ? complete({ handled: true, message }) : { handled: true };
+            }
+            default: {
+              const message = await performGoalAction(sid, { op: request.kind });
+              return message ? complete({ handled: true, message }) : { handled: true };
+            }
+          }
+        }
+
+        case "guided-goal": {
+          if (!sid) return complete({ handled: true, error: "No active session" });
+          await runGoalCommand(sid, { op: "guided", ...(args ? { objective: args } : {}) });
+          return complete({ handled: true, message: "Guided goal interview started" });
+        }
+
         default: {
           if (!sid) return complete({ handled: true, error: "No active session" });
           const result = await sendAgentCommand<{
@@ -2108,7 +2221,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       if (commandName === "compact") setIsCompacting(false);
     }
-  }, [addNotice, appendCommandOutput, ensureNewSession, handleSetPlanMode, isCompacting, loadModels, loadSession, loadSlashCommands, loadTools, planMode, promoteNewSession, onSessionStatsPanelOpen, onRequestNewSession, onOpenSettings]);
+  }, [addNotice, appendCommandOutput, ensureNewSession, handleSetPlanMode, isCompacting, loadModels, loadSession, loadSlashCommands, loadTools, planMode, promoteNewSession, onSessionStatsPanelOpen, onRequestNewSession, onOpenSettings, performGoalAction, runGoalCommand]);
 
   // Queued (undelivered) messages live in the queue panel only; the chat gets
   // the real user message when pi delivers it (user message_end event). An
@@ -2312,6 +2425,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (state.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(state.queuedMessages));
           if (state.subagents !== undefined) setSubagents((current) => mergeSubagentSnapshots(current, state.subagents ?? []));
           if (state.planMode !== undefined) setPlanMode(state.planMode ?? null);
+          if (state.goal !== undefined) setGoal(state.goal ?? null);
         }
       });
     }
@@ -2419,7 +2533,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     agentRunning, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, modelRoles, newSessionModel, toolPreset, thinkingLevel,
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, modelSwitching, sessionStats,
-    slashCommands, slashCommandsLoading, queuedMessages, subagents, planMode,
+    slashCommands, slashCommandsLoading, queuedMessages, subagents, planMode, goal,
     notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,
@@ -2430,7 +2544,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange, handleRoleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
-    handleBuiltinSlashCommand, handleSetPlanMode,
+    handleBuiltinSlashCommand, handleSetPlanMode, handleGoalAction,
     handleToolPresetChange, handleThinkingLevelChange, loadTools, loadSlashCommands, setActiveLeafId, setData, setMessages,
     uploadSessionFiles,
     dispatch, setAgentRunning, setForkingEntryId,

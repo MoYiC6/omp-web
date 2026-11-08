@@ -3,6 +3,8 @@ import { existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileS
 import { dirname, join } from "path";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent";
 import { planModeInfoFromEntries, webPlanModeInfo } from "@/lib/plan-mode-web";
+import { goalInfoFromEntries } from "@/lib/goal-web";
+import { webGoalInfoForSession } from "@/lib/goal-session";
 import { getOmpSetting } from "@/lib/omp-setting-access";
 import { sessionPathKey } from "@/lib/session-path";
 import {
@@ -80,6 +82,9 @@ export async function GET(
     const planMode = liveRpc
       ? webPlanModeInfo(liveRpc.inner, getOmpSetting<boolean>(liveRpc.inner.settings, "plan.enabled"))
       : planModeInfoFromEntries(entries);
+    // Goal mode crosses the same boundary: a goal set in the TUI shows up
+    // before any web wrapper reattaches it.
+    const goal = liveRpc ? webGoalInfoForSession(liveRpc.inner as never) : goalInfoFromEntries(entries);
     return NextResponse.json({
       sessionId: id,
       filePath,
@@ -89,6 +94,7 @@ export async function GET(
       context,
       totalActiveMs,
       planMode,
+      goal,
       ...(contextUsage ? { contextUsage } : {}),
     });
   } catch (error) {

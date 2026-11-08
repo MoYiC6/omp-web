@@ -19,6 +19,7 @@ import {
   readRpcSubagentTranscript,
   RpcSubagentRegistry,
 } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-subagents";
+import type { RpcGoalController } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-goal";
 import { KeybindingsManager as TuiKeybindingsManager, TUI_KEYBINDINGS } from "@oh-my-pi/pi-tui";
 import { randomUUID } from "crypto";
 import { existsSync, realpathSync, statSync, writeFileSync } from "fs";
@@ -38,6 +39,8 @@ import {
   webPlanModeInfo,
   type ModeChangeEntryLike,
 } from "./plan-mode-web";
+import { createWebGoalController, isGoalModeAvailable, renderGuidedGoalKickoff, webGoalInfoForSession } from "./goal-session";
+import type { WebGoalOp } from "./goal-web";
 import { PRESET_FULL } from "./tool-presets";
 import { persistExplicitStartupPreferences } from "./startup-preferences";
 import { generateSessionTitle, shouldAutoGenerateTitle } from "./session-title";
@@ -254,6 +257,10 @@ export class AgentSessionWrapper {
   // The SDK registry removes terminal entries after emitting their lifecycle frame.
   // Keep a bounded per-session copy so state requests can still expose history.
   private readonly subagentHistory = new Map<string, SubagentSnapshot>();
+  // Goal mode lifecycle, shared with `omp --mode rpc` (see lib/goal-session.ts).
+  private readonly goal: RpcGoalController;
+  // Reattaching a journaled goal changes the tool set: commands wait for it.
+  private goalReady: Promise<void> = Promise.resolve();
   private _alive = true;
 
   constructor(
@@ -268,6 +275,7 @@ export class AgentSessionWrapper {
       notifyRunningChange();
     });
     this.subagents.setSubscriptionLevel("progress");
+    this.goal = createWebGoalController(inner as never, () => notifyRunningChange());
   }
 
   private rememberSubagentSnapshot(snapshot: SubagentSnapshot): void {
@@ -374,6 +382,8 @@ export class AgentSessionWrapper {
       || this.inner.isCompacting
       || this.inner.isBashRunning
       || this.subagents.getSubagents().length > 0
+      // A goal continuation decided at a yield but not yet admitted.
+      || this.goal.continuationPending
     );
   }
   bindToolUiContext(setter: (uiContext: ExtensionUiContextLike, hasUI: boolean) => void): void {
@@ -384,6 +394,9 @@ export class AgentSessionWrapper {
   start(): void {
     this.syncPlanModeFromSession();
     this.unsubscribe = this.inner.subscribe((rawEvent: AgentSessionEvent) => {
+      // Before anything reads running state: a continuation decided at this
+      // agent_end must already count as pending (RPC mode orders it the same).
+      this.goal.observe(rawEvent as never);
       const event = rawEvent as unknown as AgentEvent;
       if (event.type === "agent_end") {
         invalidateSessionListCache();
@@ -392,6 +405,13 @@ export class AgentSessionWrapper {
       this.emit(event);
       if (RUNNING_STATE_EVENT_TYPES.has(event.type)) notifyRunningChange();
     });
+    // Restore a goal journaled in this session (by the TUI or an earlier
+    // wrapper), as RPC mode does at startup: an active goal comes back paused.
+    this.goalReady = this.goal.reconcile()
+      .then(() => this.goal.settled())
+      .catch((error) => {
+        console.error("[omp-web] failed to restore goal mode:", error instanceof Error ? error.message : error);
+      });
     this.resetIdleTimer();
     notifyRunningChange();
   }
@@ -472,7 +492,7 @@ export class AgentSessionWrapper {
   }
 
   private shouldWaitForExtensions(type: string): boolean {
-    return type === "prompt" || type === "steer" || type === "follow_up" || type === "get_commands" || type === "execute_slash_command";
+    return type === "prompt" || type === "steer" || type === "follow_up" || type === "get_commands" || type === "execute_slash_command" || type === "goal";
   }
 
   private async withFinalRunningNotification<T>(operation: () => Promise<T>): Promise<T> {
@@ -669,6 +689,7 @@ export class AgentSessionWrapper {
 
   async send(command: Record<string, unknown>): Promise<unknown> {
     this.resetIdleTimer();
+    await this.goalReady;
     const type = command.type as string;
     if (this.shouldWaitForExtensions(type)) await this.waitForExtensionsBound();
     if (type === "prompt" || type === "steer" || type === "follow_up") {
@@ -724,6 +745,9 @@ export class AgentSessionWrapper {
       }
 
       case "abort":
+        // Before the abort starts, so the aborted turn's own agent_end cannot
+        // schedule another goal turn (the SDK pauses the interrupted goal).
+        this.goal.stopForHostAbort();
         await this.withFinalRunningNotification(() => this.inner.abort());
         return null;
 
@@ -731,6 +755,8 @@ export class AgentSessionWrapper {
         // Plan mode may live only in the session journal (fresh wrapper for a
         // TUI-planned session); surface it before reading observable state.
         this.syncPlanModeFromSession();
+        // A goal exit triggered by the last turn restores tools asynchronously.
+        await this.goal.settled();
         const model = this.inner.model;
         const contextUsage = this.inner.getContextUsage();
         return {
@@ -758,6 +784,7 @@ export class AgentSessionWrapper {
           extensionWidgets: this.getExtensionWidgets(),
           subagents: this.getSubagentSnapshots(),
           planMode: webPlanModeInfo(this.inner, getOmpSetting<boolean>(this.inner.settings, "plan.enabled")),
+          goal: webGoalInfoForSession(this.inner as never),
         };
       }
       case "get_subagents":
@@ -842,7 +869,16 @@ export class AgentSessionWrapper {
         if (this.inner.isBashRunning) {
           throw new Error("Cannot navigate while a shell command is running");
         }
-        const result = await this.inner.navigateTree(command.targetId as string, {});
+        // A goal continuation waiting to start is held until the navigation
+        // ends, then resumes in the same session (RPC mode's navigate_tree).
+        await this.goal.beginSessionChange();
+        let result: Awaited<ReturnType<AgentSessionLike["navigateTree"]>>;
+        try {
+          result = await this.inner.navigateTree(command.targetId as string, {});
+        } finally {
+          await this.goal.endSessionChange();
+          await this.goal.settled();
+        }
         return { cancelled: result.cancelled };
       }
 
@@ -864,6 +900,10 @@ export class AgentSessionWrapper {
         // even when the journal still says plan mode, and the toggle must
         // land on the persisted mode rather than a stale default.
         this.syncPlanModeFromSession();
+        // The TUI refuses plan mode while a goal is active or paused.
+        if (command.enabled === true && this.inner.getGoalModeState()) {
+          throw new Error("Exit goal mode first (/goal drop).");
+        }
         const planMode = applyWebPlanModeTransition(
           this.inner,
           command.enabled === true,
@@ -987,6 +1027,47 @@ export class AgentSessionWrapper {
       }
 
 
+      case "goal": {
+        const op = command.op as WebGoalOp;
+        switch (op) {
+          case "get":
+            break;
+          case "create":
+          case "set": {
+            const objective = typeof command.objective === "string" ? command.objective.trim() : "";
+            if (!objective) throw new Error("A goal objective is required.");
+            const current = this.inner.getGoalModeState();
+            if (op === "set" && current?.enabled) {
+              // `/goal set` on an active goal replaces its objective (TUI semantics).
+              this.inner.setGoalModeState(await this.inner.goalRuntime.replaceGoal({ objective }));
+              if (this.inner.isStreaming) await this.inner.sendGoalModeContext({ deliverAs: "steer" });
+            } else {
+              await this.goal.handle({ op: "create", objective });
+            }
+            // As in the TUI, the browser submits the objective as the user's
+            // prompt next. Void the continuation `create` scheduled so it cannot
+            // start ahead of that prompt; the prompt's user message re-arms
+            // continuation (`RpcGoalController.observe`).
+            this.goal.stopForHostAbort();
+            break;
+          }
+          case "pause":
+          case "resume":
+          case "drop":
+            await this.goal.handle({ op });
+            break;
+          case "budget":
+            await this.setGoalBudget(command.tokenBudget);
+            break;
+          case "guided":
+            await this.startGuidedGoal(command.objective);
+            break;
+          default:
+            throw new Error(`Unknown goal op: ${String(op)}`);
+        }
+        return { goal: webGoalInfoForSession(this.inner as never) };
+      }
+
       case "set_tools": {
         const toolNames = command.toolNames as string[];
         this.setForceEmptySystemPrompt(toolNames.length === 0);
@@ -1055,6 +1136,48 @@ export class AgentSessionWrapper {
       default:
         throw new Error(`Unsupported command: ${type}`);
     }
+  }
+
+  /** `/goal budget` (the TUI's `#handleGoalBudgetCommand`); null clears the budget. */
+  private async setGoalBudget(tokenBudget: unknown): Promise<void> {
+    const state = this.inner.getGoalModeState();
+    if (!state?.enabled) throw new Error(state ? "Resume the goal before adjusting the budget." : "No active goal.");
+    if (state.goal.status === "complete") throw new Error("Goal is already complete.");
+    if (tokenBudget !== null && !(typeof tokenBudget === "number" && Number.isSafeInteger(tokenBudget) && tokenBudget > 0)) {
+      throw new Error("Goal budget must be a positive integer or `off`.");
+    }
+    await this.inner.goalRuntime.onBudgetMutated(tokenBudget ?? undefined);
+    // A raised budget can reopen a budget-limited goal while the session is
+    // idle. A same-session change makes the controller re-check its gates and
+    // schedule the continuation, which the TUI schedules here directly.
+    await this.goal.beginSessionChange();
+    await this.goal.endSessionChange();
+  }
+
+  /**
+   * `/guided-goal` (the TUI's `handleGuidedGoalCommand`): expose the goal tool
+   * and start a hidden interview turn; the agent creates the goal with the
+   * tool once the objective is settled. Fire and forget like `prompt`: the
+   * interview's events arrive over SSE.
+   */
+  private async startGuidedGoal(initial: unknown): Promise<void> {
+    if (!isGoalModeAvailable(this.inner.settings)) {
+      throw new Error("Goal mode is disabled. Enable it in settings (goal.enabled).");
+    }
+    if (this.inner.getPlanModeState?.()?.enabled) throw new Error("Exit plan mode before starting a goal.");
+    const state = this.inner.getGoalModeState();
+    if (state?.enabled) throw new Error("Goal mode is already active. Use /goal to manage it, or /goal drop to start over.");
+    if (state) throw new Error("Resume the current goal first, or drop it before setting a new objective.");
+    const kickoff = renderGuidedGoalKickoff(typeof initial === "string" ? initial : undefined);
+    const enabledTools = this.inner.getEnabledToolNames();
+    if (!enabledTools.includes("goal")) await this.inner.setActiveToolsByName([...enabledTools, "goal"]);
+    if (this.inner.isStreaming) {
+      await this.inner.followUp(kickoff, undefined, { synthetic: true });
+      return;
+    }
+    this.inner.prompt(kickoff, { synthetic: true }).catch((error) => {
+      this.emit({ type: "prompt_error", errorMessage: error instanceof Error ? error.message : String(error) });
+    });
   }
 
   destroy(): void {

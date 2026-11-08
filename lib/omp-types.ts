@@ -133,6 +133,23 @@ export interface ExtensionUiContextLike {
   setToolsExpanded(expanded: boolean): void;
 }
 
+/** Structural view of omp's `GoalModeState` (goals/state.ts). */
+export interface GoalModeStateLike {
+  enabled: boolean;
+  mode: "active" | "exiting";
+  reason?: "completed";
+  goal: {
+    id: string;
+    objective: string;
+    status: "active" | "paused" | "budget-limited" | "complete" | "dropped";
+    tokenBudget?: number;
+    tokensUsed: number;
+    timeUsedSeconds: number;
+    createdAt: number;
+    updatedAt: number;
+  };
+}
+
 /**
  * Structural view of omp's `AgentSession`, narrowed to what omp-web drives.
  *
@@ -168,6 +185,7 @@ export interface AgentSessionLike {
     images?: Array<{ type: "image"; data: string; mimeType: string }>;
     streamingBehavior?: "steer" | "followUp";
     userInitiated?: boolean;
+    synthetic?: boolean;
   }): Promise<boolean>;
   abort(options?: { reason?: string }): Promise<void>;
   executeBash(command: string, onChunk?: (chunk: string) => void, options?: { excludeFromContext?: boolean }): Promise<{ output: string; exitCode?: number; cancelled?: boolean; truncated?: boolean; fullOutputPath?: string }>;
@@ -184,7 +202,7 @@ export interface AgentSessionLike {
   setAutoCompactionEnabled(enabled: boolean): void;
   setAutoRetryEnabled(enabled: boolean): void;
   steer(text: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): Promise<void>;
-  followUp(text: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): Promise<void>;
+  followUp(text: string, images?: Array<{ type: "image"; data: string; mimeType: string }>, options?: { synthetic?: boolean }): Promise<void>;
   readonly queuedMessageCount: number;
   getQueuedMessages(): { steering: readonly string[]; followUp: readonly string[] };
   clearQueue(): { steering: unknown[]; followUp: unknown[] };
@@ -215,6 +233,13 @@ export interface AgentSessionLike {
     details?: { planFilePath?: string; title?: string; planExists?: boolean };
   }>;
   setPlanReferencePath?(path: string): void;
+  readonly goalRuntime: {
+    replaceGoal(input: { objective: string; tokenBudget?: number }): Promise<GoalModeStateLike>;
+    onBudgetMutated(tokenBudget: number | undefined): Promise<unknown>;
+  };
+  getGoalModeState(): GoalModeStateLike | undefined;
+  setGoalModeState(state: GoalModeStateLike | undefined): void;
+  sendGoalModeContext(options?: { deliverAs?: "steer" | "followUp" | "nextTurn" | "aside" }): Promise<void>;
   getContextUsage(): { tokens: number; contextWindow: number; percent: number } | undefined;
   dispose?(options?: { keepAlive?: boolean }): Promise<void>;
 }
