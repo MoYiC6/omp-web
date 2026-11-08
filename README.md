@@ -1,293 +1,142 @@
 <p align="center">
-  <img src="./docs/hero.png" alt="omp-web — Browser workspace for omp" width="100%">
+  <img src="./docs/hero.png" alt="omp-web — omp 的浏览器工作台" width="100%">
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/omp-web"><img src="https://img.shields.io/npm/v/omp-web?style=flat&colorA=222222&colorB=CB3837" alt="npm version"></a>
-  <a href="https://github.com/ddallabenetta/omp-web/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ddallabenetta/omp-web?style=flat&colorA=222222&colorB=58A6FF" alt="License"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-58A6FF?style=flat&colorA=222222" alt="License"></a>
+  <img src="https://img.shields.io/badge/omp%20SDK-18.18.1-CB3837?style=flat&colorA=222222" alt="omp SDK 18.18.1">
+  <a href="https://bun.sh"><img src="https://img.shields.io/badge/runtime-Bun%20%E2%89%A5%201.4.4-f472b6?style=flat&colorA=222222" alt="Bun"></a>
   <a href="https://www.typescriptlang.org"><img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat&colorA=222222&logo=typescript&logoColor=white" alt="TypeScript"></a>
-  <a href="https://bun.sh"><img src="https://img.shields.io/badge/runtime-Bun-f472b6?style=flat&colorA=222222" alt="Bun"></a>
 </p>
 
-<p align="center">
-  Fork of <a href="https://github.com/agegr/pi-web">pi-web</a> by <a href="https://github.com/agegr">@agegr</a> 
-</p>
+# omp-web
 
+[oh-my-pi（omp）](https://github.com/can1357/oh-my-pi) 编程智能体的 Web 界面。
 
-The web view for [omp (oh-my-pi)](https://github.com/can1357/oh-my-pi). omp-web reads the sessions the `omp` CLI already writes and gives you a browser workspace for session browsing, real-time chat, model roles, provider configuration, skill management, and project file preview.
+omp-web 不是另一个 agent。它在服务端进程内直接运行 omp 自己的 SDK，读写的就是 `omp` 命令行使用的 `~/.omp/agent` 目录：终端里开始的会话可以在浏览器里接着聊，反过来也一样；模型、凭据、技能、插件配置两边共用。
 
-It is not a separate agent: omp-web runs omp's own SDK in-process, against the same `~/.omp/agent` directory, so a session started in the terminal continues in the browser and back again.
+## 与上游的关系
 
+本仓库基于以下项目，按 MIT 许可证保留原作者版权：
 
-## Quick Start
-
-omp-web serves its API on **Bun**, because that is what the omp SDK requires (it is published as TypeScript sources and imports `bun:` builtins). Install Bun 1.3.14 or newer:
-
-```bash
-curl -fsSL https://bun.sh/install | bash        # macOS / Linux
-powershell -c "irm bun.sh/install.ps1 | iex"    # Windows
+```
+agegr/pi-web  →  ddallabenetta/omp-web  →  n0rthwood/omp-web  →  本仓库
 ```
 
-**Run without installing:**
+相对 `n0rthwood/omp-web` 0.5.17 的改动：
 
-```bash
-bunx omp-web@latest
-```
+- omp SDK（`@oh-my-pi/*`）从 18.10.4 升级到 **18.18.1**，与当前 `omp` 命令行版本一致；移除了只适用于 18.10.4 的 prelude 补丁。
+- 修复新会话不会自动生成标题：omp 18.x 已删除 `providers.tinyModel` 设置（改为 `modelRoles.tiny`），旧代码读取它时会报错。
 
-On Windows, if `bunx` fails before startup with `EPERM: Operation not permitted (NtSetInformationFile())` while moving a package to the Bun cache, the failure is in Bun's Windows cache rename, not in omp-web. Update Bun and retry with a fresh cache:
+> npm 上的 `omp-web` 包是上游版本（SDK 18.10.4），不包含以上改动。使用本仓库请按下面的方式从源码运行。
 
-```powershell
-bun upgrade
-bun pm cache rm
-$env:BUN_INSTALL_CACHE_DIR = "$env:LOCALAPPDATA\omp-web-bun-cache"
-New-Item -ItemType Directory -Force $env:BUN_INSTALL_CACHE_DIR | Out-Null
-bunx omp-web@latest
-```
+## 功能
 
-If an antivirus or endpoint-security process still holds the extracted directory open, use npm for dependency installation; the `omp-web` launcher still starts the server through Bun:
+- **会话浏览**：按项目分组列出所有 omp 会话，支持搜索、重命名、删除、导出 HTML。
+- **实时对话**：流式输出、工具调用卡片、思考过程、上下文用量与费用；刷新页面后自动重连正在运行的会话。
+- **分支与派生**：从任意一条消息继续（会话内分支），或派生出独立的新会话。
+- **模型角色**：按工作类型（`default`、`smol`、`slow`、`plan`、`commit`、`task` 等）分配模型，与 TUI 的 `/model` 写入同一份配置。
+- **计划模式**：先让 agent 起草计划，确认后再执行。
+- **项目文件**：侧边栏文件树，预览源码、Markdown、图片、音频、PDF、DOCX，查看 Git diff，切换 Git worktree。
+- **网页配置**：管理模型提供方、OAuth 登录与 API Key、`models.yml`、插件和技能。
+- **终端标签页**（可选）：在工作区里开一个真实的 shell。
+- **多语言界面**：简体中文、English。
+- **主题**：直接使用 omp 的明暗主题配色。
 
-```powershell
-npm install -g omp-web@latest
-omp-web
-```
+## 截图
 
-**Or install globally:**
-
-```bash
-bun add -g omp-web    # or: npm install -g omp-web
-omp-web
-```
-
-Then open [http://127.0.0.1:30141](http://127.0.0.1:30141). The CLI opens the browser automatically once the server is ready, and listens on `127.0.0.1` by default.
-
-The `omp-web` entrypoint itself runs under Node or Bun; it locates Bun and re-executes the server there. Point it at a specific build with `OMP_WEB_BUN=/path/to/bun`.
-
-**Options:**
-
-```bash
-omp-web --port 8080              # custom port
-omp-web --hostname 0.0.0.0       # expose on a trusted network
-omp-web -p 8080 -H 0.0.0.0       # combine options
-omp-web --no-open                # do not open the browser automatically
-
-PORT=8080 omp-web                 # environment variable is also supported
-OMP_WEB_HOSTNAME=0.0.0.0 omp-web  # explicit network exposure
-OMP_WEB_ALLOWED_HOSTS=omp.internal omp-web  # allow an exact proxy/custom hostname
-OMP_WEB_PASSWORD='a-long-random-password' omp-web  # require Basic Auth (username: omp)
-OMP_WEB_NO_OPEN=1 omp-web         # useful when running as a background service
-```
-
-Set `OMP_WEB_PASSWORD` to protect the web interface and every API endpoint with HTTP Basic Auth (username: `omp`). Leaving the variable unset or empty disables authentication.
-
-omp-web also supports named web users with a browser login page (session cookies) and per-user CLI tokens, plus admin/user roles and per-user project visibility. `OMP_WEB_PASSWORD` keeps working as a migration bridge while you set up real users — see [Web authentication and users](./docs/web-users.md) for the login flow, the `omp-web-users.yml` format, tokens, roles, and the first-admin setup path.
-
-omp-web can invoke a high-privilege agent, so when authentication is enabled every request — including `curl` from the same machine — needs a credential; there is no loopback exception. Do not expose plain HTTP to the internet. Use HTTPS through a trusted reverse proxy or a trusted VPN for remote access.
-API requests accept loopback names, IP literals, the selected bind hostname, and exact comma-separated names in `OMP_WEB_ALLOWED_HOSTS`. Configure that variable when a trusted reverse proxy uses a different external hostname.
-
-## Model roles
-
-omp does not have "the" model — it has a model per **scope of work**, and omp-web exposes the same roles the TUI's `/model` selector and `Ctrl+P` cycle use:
-
-| Role | What it runs |
+| 会话与文件浏览 | 实时对话 |
 | --- | --- |
-| `default` | ordinary turns |
-| `smol` | cheap, fast subagent and background work |
-| `slow` | deep reasoning on hard problems |
-| `plan` | plan mode |
-| `commit` | commit messages and changelogs |
-| `task` | the model subagents spawn with |
-| `advisor` | the second model that reviews every turn |
-| `vision`, `designer`, `tiny` | image turns, design work, classification |
+| ![会话列表与文件树](./docs/screenshots/01-sidebar-and-explorer.png) | ![对话界面](./docs/screenshots/02-chat-session.png) |
+| **文件预览** | **模型角色配置** |
+| ![文件预览](./docs/screenshots/03-file-preview.png) | ![模型角色](./docs/screenshots/04-settings.png) |
 
-Two places surface them:
+## 快速开始
 
-- **The model picker in the chat bar** lists the configured roles above the flat model list. Picking one switches the session onto that role's model *and records the role*, exactly like `/model` does, so the transcript and omp's retry fallbacks agree on which role is driving.
-- **Models → Model roles** assigns a model to each role. Writes go to `modelRoles` in `~/.omp/agent/config.yml` (or `.omp/config.yml` when you pick **This project**), which is the same record the CLI reads — an assignment made in the browser is what your next terminal session starts with.
+### 环境要求
 
-Session titles follow the same routing: omp-web asks omp to name a session, and omp resolves that through the `tiny` → `commit` → `smol` chain rather than the session's primary model.
+- [Bun](https://bun.sh) **1.4.4 或更高**（omp SDK 18.18.1 的要求）。omp SDK 以 TypeScript 源码发布并依赖 `bun:` 内置模块，服务端只能在 Bun 上运行。
+- 已安装并配置过 [omp](https://github.com/can1357/oh-my-pi)（至少有一个可用的模型提供方）。没配置也能启动，可以在网页的「模型」面板里登录或填写 API Key。
 
-## HTTP Proxy
-
-omp-web reads the standard `HTTP_PROXY` and `HTTPS_PROXY` environment variables for server-side model and API requests. Bun reads them once at process start, so set them before launching:
-
-On macOS or Linux:
+### 安装与启动
 
 ```bash
-HTTP_PROXY=http://127.0.0.1:7890 \
-HTTPS_PROXY=http://127.0.0.1:7890 \
-bunx omp-web@latest
+git clone https://github.com/MoYiC6/omp-web.git
+cd omp-web
+bun install
+bun run build
+bun bin/omp-web.js
 ```
 
-On Windows PowerShell:
+服务就绪后会自动打开浏览器，地址是 <http://127.0.0.1:30141>，默认只监听本机。
 
-```powershell
-$env:HTTP_PROXY = "http://127.0.0.1:7890"
-$env:HTTPS_PROXY = "http://127.0.0.1:7890"
-bunx omp-web@latest
-```
-
-Requests to loopback addresses are never proxied, so a local provider (Ollama, LM Studio, llama.cpp) keeps working with a proxy configured. Note that Bun does **not** currently honour `NO_PROXY` for other hosts.
-
-## Features
-
-- **Pick work back up**: browse previous omp conversations by project without digging through terminal history or session paths.
-- **Route by role**: assign and switch models per scope of work — the roles omp already uses for subagents, plan mode, and commits.
-- **Try different directions safely**: continue from an earlier message or fork a session into a separate route.
-- **Work across branches**: switch Git worktrees from the sidebar so new sessions and the Explorer follow the checkout you choose.
-- **Chat beside the project**: browse files on the left and preview source, docs, images, audio, and PDFs on the right while the agent works.
-- **See session state clearly**: context usage, cost, compaction state, and system prompt details are visible from the top bar.
-- **Configure less from the terminal**: manage providers, logins/API keys, model tests, plugins, and skill switches from the web UI.
-- **Use the interface in your language**: switch between the supported UI languages from the top bar.
-- **Run a shell beside the agent**: open a Terminal tab in the workspace (Bun/Linux/macOS only, off by default):
+### 启动参数
 
 ```bash
-OMP_WEB_TERMINALS=1 omp-web   # enable the Terminal tab (off by default)
-```
-Enabling this turns the web UI into a **full shell** for whoever can reach it —
-the same trust boundary as the agent itself. On a non-loopback bind it refuses
-to activate unless authentication is enabled — `OMP_WEB_PASSWORD` or at least
-one configured web user.
-
-If a non-loopback bind is genuinely trusted — a LAN, a ZeroTier or VPN-only
-interface — and you want terminals there without authentication, say so explicitly:
-
-```bash
-OMP_WEB_TERMINALS=1 OMP_WEB_TERMINALS_ALLOW_UNAUTHENTICATED=1 \
-  OMP_WEB_HOSTNAME=0.0.0.0 omp-web
+bun bin/omp-web.js --port 8080         # 指定端口（也可用环境变量 PORT）
+bun bin/omp-web.js --hostname 0.0.0.0  # 指定监听地址（也可用 OMP_WEB_HOSTNAME）
+bun bin/omp-web.js --no-open           # 不自动打开浏览器（也可用 OMP_WEB_NO_OPEN=1）
 ```
 
-That serves an interactive shell, as your user, to anyone who can reach the
-port, and the server prints a warning at startup while it is active. Never
-combine it with a public hostname or a port forward.
+常用环境变量：
 
-## Screenshots
+| 变量 | 作用 |
+| --- | --- |
+| `OMP_WEB_PASSWORD` | 开启 HTTP Basic 认证，用户名 `omp`；未设置时不认证 |
+| `OMP_WEB_ALLOWED_HOSTS` | 反向代理使用的外部域名，逗号分隔，需精确匹配 |
+| `OMP_WEB_TERMINALS=1` | 启用终端标签页（默认关闭） |
+| `OMP_WEB_BUN` | 指定使用的 Bun 可执行文件路径 |
+| `PI_CODING_AGENT_DIR` | 使用其他 omp 数据目录（默认 `~/.omp/agent`） |
+| `HTTP_PROXY` / `HTTPS_PROXY` | 服务端请求模型 API 时使用的代理 |
 
-**Session browsing + file explorer** — projects and past sessions on the left, the project's real file tree underneath, ready to preview or attach to a message.
+## 安全说明
 
-![Sidebar with session browsing and the file explorer](./docs/screenshots/01-sidebar-and-explorer.png)
+omp-web 能驱动一个可以读写文件、执行命令的 agent，**能访问这个页面的人就能操作你的电脑**。
 
-**Real-time chat with model roles** — the agent's tool calls, cost, context usage, and the active model role are all visible while it works.
+- 默认只监听 `127.0.0.1`，本机使用无需额外配置。
+- 需要在局域网或远程访问时，务必开启认证：设置 `OMP_WEB_PASSWORD`，或配置网页用户（登录页、角色、每个用户可见的项目、CLI Token），详见 [docs/web-users.md](./docs/web-users.md)。开启认证后，包括本机 `curl` 在内的所有请求都需要凭据。
+- 不要把纯 HTTP 端口暴露到公网，请通过 HTTPS 反向代理或 VPN 访问。
+- 终端标签页等同于一个完整 shell。在非本机地址上，未开启认证时它会拒绝启用。
+- 打开一个项目不会执行它的代码：项目内的 `.omp/extensions`、`.omp/hooks`、`.omp/tools` 和 `.mcp.json` 需要你明确信任后才会加载，详见 [docs/project-trust.md](./docs/project-trust.md)。
 
-![Chat view showing an agent run with tool calls, cost, and context usage](./docs/screenshots/02-chat-session.png)
+## 使用说明
 
-**Chat beside the project** — browse and preview a file next to the conversation without losing your place.
+- **数据位置**：会话文件在 `~/.omp/agent/sessions/<编码后的 cwd>/<时间戳>_<uuid>.jsonl`；凭据存在 omp 的 `agent.db`，与命令行共用。
+- **不要同时打开同一个会话**：同一个会话不要在 omp-web 和终端里同时运行，两边会同时追加写入同一个文件。
+- **重启会中断对话**：浏览器里的会话运行在服务进程内，重启服务会中止所有正在进行的回合。
+- **会话标题**：按 omp 的 `tiny → commit → smol` 角色链选择模型生成，不占用会话主模型。配置了本地 tiny 模型（`modelRoles.tiny: local/<id>`）时只用本地模型。
+- **HTML 导出**：omp 18.18.1 导出的 HTML 从 stencil.so 加载查看器脚本，打开时需要联网。
+- **代理**：Bun 只在启动时读取一次 `HTTP_PROXY` / `HTTPS_PROXY`，且不支持 `NO_PROXY`；如果使用 Ollama、LM Studio 等本地模型服务，注意代理可能也作用于本地地址。
+- **Git worktree**：见 [docs/worktrees.zh-CN.md](./docs/worktrees.zh-CN.md)。
+- **界面翻译**：见 [docs/i18n.md](./docs/i18n.md)。
 
-![Chat pane next to a rendered Markdown file preview](./docs/screenshots/03-file-preview.png)
-
-**Model roles, configured once, used everywhere** — assign a model per role (`default`, `smol`, `plan`, `commit`, …); both omp-web and the omp CLI read the same `models.yml`.
-
-![Settings panel showing model role assignments](./docs/screenshots/04-settings.png)
-
-**Full omp theme support** — omp-web reads omp's own dark/light palette mappings from `~/.omp/agent/config.yml` and applies them live, so the web view matches the terminal.
-
-![Theme settings showing omp's dark and light palette mapping](./docs/screenshots/05-themes.png)
-
-## Notes
-
-- **Data directory**: omp-web reads `~/.omp/agent/sessions` by default. Set `PI_CODING_AGENT_DIR` to point at another omp agent directory (omp kept the variable name).
-- **Session files**: files are stored as `~/.omp/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`.
-- **Provider config**: the Models panel reads and writes `models.yml` in the omp agent directory. Credentials live in omp's `agent.db`, shared with the CLI. A header value that names an environment variable (bare name, no `$`) is substituted at request time.
-- **Project trust**: opening a repository in a browser tab must not run its code, so omp-web gates a project's `.omp/extensions`, `.omp/hooks`, `.omp/tools` and `.mcp.json` behind an explicit trust decision. Skills and rules are data and load either way. See [Project trust](./docs/project-trust.md).
-- **File access**: file browsing and preview are scoped to the selected project directory and working directories that appear in sessions.
-- **Git worktrees**: see [Worktrees in omp-web](./docs/worktrees.md) for when the switcher appears, how new worktrees are created, and what removal does.
-- **Forks vs in-session branches**: Fork creates a new `.jsonl` file. "Edit from here" creates another branch inside the same session file.
-- **Skills**: the skill installer shells out to `npx skills add --agent claude-code`, which writes the `.claude/skills` layout omp discovers by default.
-- **Internationalization**: see [Internationalization](./docs/i18n.md) for using translations and adding languages or UI text.
-
-### Downstream Session Context Menu
-
-Electron wrappers and other downstream integrations can provide a session-row
-context menu without patching `SessionSidebar`. Listen for the cancelable
-`pi-web:session-row-contextmenu` browser event and call `preventDefault()`
-synchronously when the integration will handle it:
-
-```js
-window.addEventListener("pi-web:session-row-contextmenu", (event) => {
-  event.preventDefault();
-  const { id, path, cwd, name, clientX, clientY, refresh } = event.detail;
-
-  void openSessionMenu({ id, path, cwd, name, clientX, clientY }).then((changed) => {
-    if (changed) refresh();
-  });
-});
-```
-
-The detail object contains `id`, `path`, `cwd`, optional `name`, pointer
-coordinates, and a `refresh()` callback for actions that change the session
-list. If no listener cancels the extension event, Pi Web preserves the
-browser's native context menu. This hook is browser-side and independent of
-Pi agent extensions.
-
-## Development
+## 开发
 
 ```bash
 bun install
-bun run dev
-```
-
-The local dev server runs at [http://127.0.0.1:30141](http://127.0.0.1:30141).
-
-Common checks:
-
-```bash
+bun run dev        # 开发服务器，http://127.0.0.1:30141
 bun run typecheck
 bun run lint
-bun test
+bun test           # 需要用 bun test，Node 无法加载 omp SDK
 ```
 
-Avoid running `bun run build` during local development. It writes to `.next/` and can interfere with the dev server; leave builds for release work.
+- 开发期间不要运行 `bun run build`：它会覆盖 `.next/`，干扰正在运行的开发服务器。
+- 不要用 `next dev` 测性能：开发模式每个 API 请求慢约 800ms，生产构建只有几毫秒。
+- 升级到 SDK 18.18.1 后，测试套件有 22 个失败，与升级前（18.10.4）完全相同，属于上游已有问题。
 
-## Project Structure
+### 目录结构
 
 ```text
-app/
-  api/
-    agent/          # creates/drives AgentSession and exposes SSE events
-    auth/           # OAuth and API key management through omp's AuthStorage
-    cwd/browse/     # browsable server directory listing
-    cwd/validate/   # custom working directory validation
-    default-cwd/    # omp default working directory lookup
-    files/          # file listing, reading, preview, and watching
-    home/           # current user home directory
-    model-roles/    # read/write omp's modelRoles (default/smol/slow/plan/…)
-    models/         # available models, default model, thinking levels, roles
-    models-config/  # read/write models.yml and test models
-    plugins/        # omp plugin install/remove/enable/disable
-    sessions/       # session reads, rename, delete, context, HTML export
-    skills/         # skill listing, search, install, enable/disable
-components/
-  AppShell.tsx        # main layout, URL state, top panels, file tabs
-  SessionSidebar.tsx  # project selector, session tree, Explorer
-  DirectoryPicker.tsx # browsable and editable working-directory picker
-  ChatWindow.tsx      # messages, SSE, image drag/drop, minimap
-  ChatInput.tsx       # input bar, model/role/tools/thinking/compact/slash controls
-  MessageView.tsx     # message, thinking, tool call/result rendering
-  ModelsConfig.tsx    # provider and auth configuration panel
-  ModelRolesPanel.tsx # per-role model assignment
-  SkillsConfig.tsx    # skill management panel
-  FileExplorer.tsx    # file tree
-  FileViewer.tsx      # source, diff, image, audio, PDF, DOCX preview
-lib/
-  directory-browser.ts # directory normalization and safe listing helpers
-  http-dispatcher.ts  # HTTP(S) proxy setup for server-side fetch
-  model-roles.ts      # omp's model roles, read and written for the browser
-  model-scope.ts      # enabledModels resolution shared by UI and startup
-  omp-runtime.ts      # shared Settings + AuthStorage + ModelRegistry
-  omp-types.ts        # structural view of omp's AgentSession
-  project-trust.ts    # gates a project's executable resources
-  rpc-manager.ts      # AgentSessionWrapper lifecycle and global registry
-  session-reader.ts   # parses .jsonl session files and branch contexts
-  normalize.ts        # normalizes toolCall field names
-  file-access.ts      # file read safety boundary
-  file-paths.ts       # path encoding and relative path helpers
-  markdown.ts         # Markdown/Mermaid/KaTeX plugin configuration
-hooks/
-  useAgentSession.ts  # session loading, command sending, SSE state machine
-  useAudio.ts         # completion sound
-  useDragDrop.ts      # image drag/drop
-  useTheme.ts         # theme switching
-bin/
-  omp-web.js          # CLI entrypoint; re-executes the server under Bun
-  runtime.js          # Node/Bun version checks and Bun discovery
-instrumentation.ts    # initializes the server HTTP dispatcher
+app/api/        Next.js API 路由：agent（会话与 SSE）、sessions、files、models、auth、skills、plugins …
+components/     React 界面：AppShell、SessionSidebar、ChatWindow、ChatInput、MessageView、FileViewer …
+hooks/          useAgentSession（会话加载、命令发送、SSE 状态机）等
+lib/            服务端逻辑：rpc-manager（AgentSession 生命周期）、omp-runtime、session-reader、session-title …
+bin/            omp-web.js 启动入口：查找 Bun 并以生产模式启动服务
+docs/           认证、项目信任、worktree、多语言等文档
 ```
+
+更详细的架构说明和已知陷阱见 [AGENTS.md](./AGENTS.md)。
+
+## 许可证
+
+[MIT](./LICENSE)。原始代码版权归 [pi-web](https://github.com/agegr/pi-web) 及各上游 fork 作者所有。
