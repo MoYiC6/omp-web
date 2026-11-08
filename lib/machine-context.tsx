@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { SafeMachine, UserVisibleMachine } from "@/lib/api-types";
 import { LOCAL_MACHINE_ID, setCurrentMachineId } from "@/lib/api-path";
 import { parseLocation } from "@/lib/nav-url";
+import { useI18n } from "@/hooks/useI18n";
 
 export const localMachine: SafeMachine = {
   id: LOCAL_MACHINE_ID,
@@ -107,9 +108,17 @@ export function MachineProvider(props: { children: React.ReactNode }): React.Rea
     });
   }, []);
 
+  const { t } = useI18n();
+  // The local machine's stored name is a fixed English identity; consumers
+  // render `machine.name`, so swap in the display name here once.
+  const localizedMachines = useMemo(
+    () => machines.map((machine) => (machine.id === LOCAL_MACHINE_ID ? { ...machine, name: t("common.thisMachine") } : machine)),
+    [machines, t],
+  );
+
   const value = useMemo<MachineContextValue>(
-    () => ({ machineId, machines, commitMachineId, refreshMachines, loading, error }),
-    [machineId, machines, commitMachineId, refreshMachines, loading, error],
+    () => ({ machineId, machines: localizedMachines, commitMachineId, refreshMachines, loading, error }),
+    [machineId, localizedMachines, commitMachineId, refreshMachines, loading, error],
   );
 
   return <MachineContext.Provider value={value}>{props.children}</MachineContext.Provider>;
