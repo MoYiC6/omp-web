@@ -7,7 +7,6 @@ const runningEventsSource = await readFile(new URL("./running/events/route.ts", 
 
 test("agent SSE projects SDK events onto the fields consumed by the web client", () => {
   assert.match(agentEventsSource, /OMITTED_EVENT_TYPES: Record<string, true> = \{ turn_start: true, turn_end: true \}/);
-  assert.doesNotMatch(agentEventsSource, /tool_execution_update/);
   assert.match(agentEventsSource, /delete clientEvent\.assistantMessageEvent/);
   assert.match(agentEventsSource, /event\.type === "agent_end"\) return \{ type: "agent_end" \}/);
   assert.match(agentEventsSource, /const clientEvent = toClientEvent\(event\)/);

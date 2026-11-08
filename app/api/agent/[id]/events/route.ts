@@ -2,6 +2,7 @@ import { resolveSessionPath } from "@/lib/session-reader";
 import { getRpcSession, startRpcSession, type AgentEvent } from "@/lib/rpc-manager";
 import { isApiRequestAllowed } from "@/lib/request-security";
 import { requireVisibleSession } from "@/lib/web-session-guard";
+import { createToolUpdateThrottle } from "@/lib/agent-event-throttle";
 
 const OMITTED_EVENT_TYPES: Record<string, true> = { turn_start: true, turn_end: true };
 
@@ -43,6 +44,7 @@ export async function GET(
     }
   }
 
+  let cleanupStream = () => {};
   const stream = new ReadableStream({
     start(controller) {
       const encoder = new TextEncoder();
@@ -50,13 +52,14 @@ export async function GET(
         const text = `data: ${JSON.stringify(data)}\n\n`;
         controller.enqueue(encoder.encode(text));
       };
+      const toolUpdates = createToolUpdateThrottle(encode);
 
       // Send initial connected event
       encode({ type: "connected", sessionId: id });
 
       const unsubscribe = session.onEvent((event) => {
         const clientEvent = toClientEvent(event);
-        if (clientEvent) encode(clientEvent);
+        if (clientEvent) toolUpdates.push(clientEvent);
       });
 
       // Heartbeat every 30s to prevent server/proxy timeout (Next.js default ~120-150s)
@@ -69,14 +72,28 @@ export async function GET(
       }, 30_000);
 
       // Cleanup when client disconnects
+      let closed = false;
       const cleanup = () => {
+        if (closed) return;
+        closed = true;
         clearInterval(heartbeat);
+        toolUpdates.dispose();
         unsubscribe();
+        req.signal?.removeEventListener("abort", abort);
+      };
+      const abort = () => {
+        if (closed) return;
+        cleanup();
         controller.close();
       };
+      cleanupStream = cleanup;
 
       // Detect client disconnect via abort signal
-      req.signal?.addEventListener("abort", cleanup);
+      req.signal?.addEventListener("abort", abort);
+      if (req.signal?.aborted) abort();
+    },
+    cancel() {
+      cleanupStream();
     },
   });
 
