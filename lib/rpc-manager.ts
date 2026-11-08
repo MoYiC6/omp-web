@@ -42,6 +42,7 @@ import {
 } from "./plan-mode-web";
 import { createWebGoalController, isGoalModeAvailable, renderGuidedGoalKickoff, webGoalInfoForSession } from "./goal-session";
 import type { WebGoalOp } from "./goal-web";
+import type { BtwRecord } from "./btw-web";
 import { WebLoopController } from "./loop-session";
 import { TanCommandController } from "@oh-my-pi/pi-coding-agent/modes/controllers/tan-command-controller";
 import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
@@ -311,6 +312,10 @@ export class AgentSessionWrapper {
       rebuildChatFromMessages: () => this.emit({ type: "session_refresh" }),
     } as unknown as InteractiveModeContext);
     this.unsubscribeTanJobs = (inner as unknown as AgentSession).asyncJobManager?.onJobSettled(() => this.syncTanJobs());
+  }
+
+  getBtwHistory(): Promise<readonly BtwRecord[]> {
+    return this.btw.history();
   }
 
   private rememberSubagentSnapshot(snapshot: SubagentSnapshot): void {
@@ -779,7 +784,7 @@ export class AgentSessionWrapper {
       case "btw_cancel":
         return { cancelled: this.btw.cancel(command.recordId as string | undefined) };
       case "get_btw_history":
-        return { records: await this.btw.history() };
+        return { records: await this.getBtwHistory() };
 
       case "prompt": {
         if (this.inner.isBashRunning) {

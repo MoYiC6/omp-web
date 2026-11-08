@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent";
+import { BtwHistoryStore } from "@oh-my-pi/pi-coding-agent/session/btw-history";
+import type { BtwRecord } from "@/lib/btw-web";
 import { planModeInfoFromEntries, webPlanModeInfo } from "@/lib/plan-mode-web";
 import { goalInfoFromEntries } from "@/lib/goal-web";
 import { webGoalInfoForSession } from "@/lib/goal-session";
@@ -85,6 +87,22 @@ export async function GET(
     // Goal mode crosses the same boundary: a goal set in the TUI shows up
     // before any web wrapper reattaches it.
     const goal = liveRpc ? webGoalInfoForSession(liveRpc.inner as never) : goalInfoFromEntries(entries);
+    // Browsing a persisted session must not create an AgentSession or SSE stream.
+    let btwHistory: readonly BtwRecord[] = [];
+    try {
+      if (liveRpc) {
+        btwHistory = await liveRpc.getBtwHistory();
+      } else {
+        const history = await BtwHistoryStore.open(sm.getArtifactsDir() ?? undefined);
+        btwHistory = history.getRecords().map((record) => {
+          const snapshot = { ...record };
+          delete snapshot.title;
+          return snapshot;
+        });
+      }
+    } catch {
+      // A damaged sidecar must not prevent reading the main conversation.
+    }
     return NextResponse.json({
       sessionId: id,
       filePath,
@@ -95,6 +113,7 @@ export async function GET(
       totalActiveMs,
       planMode,
       goal,
+      btwHistory,
       ...(contextUsage ? { contextUsage } : {}),
     });
   } catch (error) {

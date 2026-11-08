@@ -38,6 +38,7 @@ export interface SessionData {
   contextUsage?: ContextUsage;
   planMode?: WebPlanModeInfo;
   goal?: WebGoalInfo;
+  btwHistory?: readonly BtwRecord[];
   context: {
     messages: AgentMessage[];
     entryIds: string[];
@@ -597,6 +598,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setContextUsage(d.contextUsage ?? null);
       setPlanMode(d.planMode ?? null);
       setGoal(d.goal ?? null);
+      setBtwRecords((current) => mergeBtwRecords(current, d.btwHistory ?? []));
+      if (d.btwHistory?.length) setBtwVisible(true);
       setLoop(null);
       setMessages(d.context.messages);
       setEntryIds(d.context.entryIds ?? []);
@@ -892,6 +895,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     result.source.close();
     throw new EventStreamConnectionError(result.status);
   }, [connectEvents]);
+
+  const btwRunning = btwRecords.some((record) => latestBtwTurn(record).status === "running");
+  useEffect(() => {
+    btwRunningRef.current = btwRunning;
+    const sid = sessionIdRef.current;
+    // Only live history can contain a running turn; disk recovery marks it interrupted.
+    if (btwRunning && sid) void ensureEventsConnected(sid).catch(() => {});
+  }, [btwRunning, ensureEventsConnected]);
 
   const respondToExtensionUi = useCallback(async (
     request: ExtensionUiDialogRequest,
@@ -2559,9 +2570,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   useEffect(() => {
     if (session) {
       sessionIdRef.current = session.id;
-      void loadBtwHistory(session.id).catch((error) => {
-        addNotice({ type: "error", message: error instanceof Error ? error.message : String(error) });
-      });
       loadSession(session.id, true, true).then((agentState) => {
         if (agentState?.running) {
           loadTools(session.id);
