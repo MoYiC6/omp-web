@@ -950,6 +950,7 @@ export const zhCNLocale: LocalePlugin = {
     "files.failedCount": "{count} 个失败",
     "directory.pathPlaceholder": "/path/to/project 或 ~/project",
     "fileViewer.source": "源码",
+    "internalUrl.unavailable": "此内部资源不可用，或无法在当前会话中读取。",
     "fileViewer.live": "实时",
     "fileViewer.static": "静态",
     "fileViewer.docxPreview": "docx 预览",

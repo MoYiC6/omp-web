@@ -56,6 +56,7 @@ const ALLOWED_ROUTES: readonly RouteRule[] = [
   { template: "/api/sessions/:id/context", methods: ["GET"] },
   { template: "/api/sessions/:id/entries/:entryId/thinking", methods: ["GET"] },
   { template: "/api/sessions/:id/export", methods: ["GET"] },
+  { template: "/api/sessions/:id/internal-url", methods: ["GET"] },
   { template: "/api/sessions/:id/state", methods: ["GET"] },
   { template: "/api/sessions/:id", methods: ["GET", "PATCH", "DELETE"] },
   { template: "/api/sessions", methods: ["GET"] },

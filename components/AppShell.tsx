@@ -6,6 +6,7 @@ import { SessionSidebar, ToolbarIconButton } from "./SessionSidebar";
 import { SubagentPanel } from "./SubagentPanel";
 import { ChatWindow } from "./ChatWindow";
 import { FileViewer } from "./FileViewer";
+import { InternalUrlViewer } from "./InternalUrlViewer";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
 import { TerminalPanel } from "./TerminalPanel";
 import { TabBar, type Tab } from "./TabBar";
@@ -901,6 +902,17 @@ function AppShellBody({ initialTarget, initialSession, resolutionRevision }: App
   const handleOpenLinkedFile = useCallback((filePath: string) => {
     handleOpenFile(filePath, getFileName(filePath), { sourceSessionId: selectedSession?.id ?? null });
   }, [handleOpenFile, selectedSession?.id]);
+
+  const handleOpenInternalUrl = useCallback((url: string, sessionId = selectedSession?.id) => {
+    if (!sessionId) return;
+    const tabId = `internal:${sessionId}:${url}`;
+    setFileTabs((prev) => prev.some((tab) => tab.id === tabId) ? prev : [...prev, {
+      id: tabId, label: url, filePath: "", kind: "internal-url", internalUrl: url, sourceSessionId: sessionId,
+    }]);
+    setActiveFileTabId(tabId);
+    setRightPanelOpen(true);
+    if (isMobile) setSidebarOpen(false);
+  }, [selectedSession?.id, isMobile]);
 
   const handleCloseFileTab = useCallback((tabId: string) => {
     // Terminal tabs: the X button is the one and only place a shell is killed.
@@ -2076,6 +2088,7 @@ function AppShellBody({ initialTarget, initialSession, resolutionRevision }: App
               onContextUsageChange={handleContextUsageChange}
               onSubagentsChange={setSubagents}
               onOpenFile={handleOpenLinkedFile}
+              onOpenInternalUrl={handleOpenInternalUrl}
               onRequestNewSession={(cwd) => handleNewSession(`cmd-${Date.now()}`, cwd)}
               onOpenSettings={() => { setSettingsInitialSection("models"); setSettingsConfigOpen(true); }}
               soundEnabled={soundEnabled}
@@ -2209,6 +2222,12 @@ function AppShellBody({ initialTarget, initialSession, resolutionRevision }: App
               terminalId={activeFileTab.terminalId}
               onExit={() => handleTerminalExit(activeFileTab.terminalId!)}
               fontSize={terminalFontSize}
+            />
+          ) : activeFileTab?.kind === "internal-url" && activeFileTab.internalUrl && activeFileTab.sourceSessionId ? (
+            <InternalUrlViewer
+              url={activeFileTab.internalUrl}
+              sessionId={activeFileTab.sourceSessionId}
+              onOpenInternalUrl={(url) => handleOpenInternalUrl(url, activeFileTab.sourceSessionId!)}
             />
           ) : activeFileTab?.filePath ? (
             <FileViewer

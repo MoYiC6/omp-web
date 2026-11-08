@@ -1,13 +1,22 @@
-import type { Options as ReactMarkdownOptions } from "react-markdown";
+import { defaultUrlTransform, type Options as ReactMarkdownOptions } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import { isReadableInternalUrl, READABLE_INTERNAL_SCHEMES } from "./internal-url-web";
+
+export function markdownUrlTransform(url: string, key: string): string {
+  return key === "href" && isReadableInternalUrl(url) ? url : defaultUrlTransform(url);
+}
 
 const markdownSanitizeSchema = {
   ...defaultSchema,
+  protocols: {
+    ...defaultSchema.protocols,
+    href: [...(defaultSchema.protocols?.href ?? []), ...Object.keys(READABLE_INTERNAL_SCHEMES)],
+  },
   attributes: {
     ...defaultSchema.attributes,
     code: [["className", /^language-./, "math-inline", "math-display"]],

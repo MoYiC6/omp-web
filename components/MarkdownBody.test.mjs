@@ -10,13 +10,15 @@ const jiti = createJiti(import.meta.url, {
 });
 const { MarkdownBody } = await jiti.import("./MarkdownBody.tsx");
 const { normalizeDisplayMath } = await jiti.import("../lib/markdown.ts");
+const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
 
 function renderMarkdown(markdown) {
   return renderToStaticMarkup(
-    React.createElement(MarkdownBody, {
+    React.createElement(I18nProvider, null, React.createElement(MarkdownBody, {
       cwd: "/home/me/project",
       onOpenFile() {},
-    }, markdown),
+      onOpenInternalUrl() {},
+    }, markdown)),
   );
 }
 
@@ -96,4 +98,17 @@ test("does not normalize escaped delimiters or link destinations", () => {
 
   assert.equal(normalizeDisplayMath(escaped), escaped);
   assert.equal(normalizeDisplayMath(link), link);
+});
+
+test("preserves internal markdown and inline-code links in the panel", () => {
+  assert.match(renderMarkdown("[plan](local://plan.md)"), /<a href="local:\/\/plan.md">plan<\/a>/);
+  assert.match(renderMarkdown("`local://plan.md`"), /<a href="local:\/\/plan.md"><code class="markdown-inline-code">local:\/\/plan.md<\/code><\/a>/);
+  assert.doesNotMatch(renderMarkdown("`see local://plan.md`"), /<a /);
+  assert.doesNotMatch(renderMarkdown("```text\nlocal://plan.md\n```"), /href="local:/);
+});
+
+test("continues filtering unsafe links and image sources", () => {
+  assert.doesNotMatch(renderMarkdown("[bad](javascript:alert%281%29)"), /href="javascript:/);
+  assert.doesNotMatch(renderMarkdown("[bad](xd://bash)"), /href="xd:/);
+  assert.doesNotMatch(renderMarkdown("![bad](local://secret.png)"), /src="local:/);
 });

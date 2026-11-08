@@ -10,8 +10,9 @@ export interface Tab {
   filePath: string;
   sourceSessionId?: string | null;
   initialDisplayMode?: "source" | "preview" | "diff";
-  kind?: "file" | "terminal"; // default "file" when absent — every existing call site is unaffected
+  kind?: "file" | "terminal" | "internal-url";
   terminalId?: string; // present when kind === "terminal"; the server-side terminal id
+  internalUrl?: string;
 }
 
 interface Props {

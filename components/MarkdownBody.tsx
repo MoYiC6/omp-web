@@ -3,9 +3,10 @@
 import { useMemo, type MouseEvent } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import { resolveLocalFileHref } from "@/lib/file-links";
+import { isReadableInternalUrl } from "@/lib/internal-url-web";
 import { encodeFilePathForApi } from "@/lib/file-paths";
 import { apiPath } from "@/lib/api-path";
-import { markdownRehypePlugins, markdownRemarkPlugins, normalizeDisplayMath } from "@/lib/markdown";
+import { markdownRehypePlugins, markdownRemarkPlugins, markdownUrlTransform, normalizeDisplayMath } from "@/lib/markdown";
 import { MermaidBlock, CodeBlock } from "./MermaidBlock";
 
 interface MarkdownBodyProps {
@@ -14,9 +15,10 @@ interface MarkdownBodyProps {
   isStreaming?: boolean;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
+  onOpenInternalUrl?: (url: string) => void;
 }
 
-export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile }: MarkdownBodyProps) {
+export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile, onOpenInternalUrl }: MarkdownBodyProps) {
   const normalizedMarkdown = useMemo(() => normalizeDisplayMath(children), [children]);
   // Stable renderer identities keep stateful blocks mounted across message hover updates.
   const components = useMemo<Components>(() => ({
@@ -29,6 +31,9 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
           return <MermaidBlock code={raw.replace(/\n$/, "")} isStreaming={isStreaming} />;
         }
         return <CodeBlock code={raw.replace(/\n$/, "")} lang={lang} isStreaming={isStreaming} />;
+      }
+      if (onOpenInternalUrl && isReadableInternalUrl(raw)) {
+        return <a href={raw} onClick={(event) => { event.preventDefault(); onOpenInternalUrl(raw); }}><code className="markdown-inline-code">{children}</code></a>;
       }
       return (
         <code
@@ -45,6 +50,9 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
     a({ href, children, ...props }) {
       // `node` is react-markdown metadata, not a DOM attribute.
       delete props.node;
+      if (isReadableInternalUrl(href) && onOpenInternalUrl) {
+        return <a href={href} {...props} onClick={(event) => { event.preventDefault(); onOpenInternalUrl(href); }}>{children}</a>;
+      }
       const filePath = onOpenFile ? resolveLocalFileHref(href, cwd) : null;
       const openFile = onOpenFile;
       if (!filePath || !openFile) {
@@ -87,7 +95,7 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
         </div>
       );
     },
-  }), [cwd, isStreaming, onOpenFile]);
+  }), [cwd, isStreaming, onOpenFile, onOpenInternalUrl]);
 
   return (
     <div className={["markdown-body", className].filter(Boolean).join(" ")}>
@@ -95,6 +103,7 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
         remarkPlugins={markdownRemarkPlugins}
         rehypePlugins={markdownRehypePlugins}
         components={components}
+        urlTransform={markdownUrlTransform}
       >
         {normalizedMarkdown}
       </ReactMarkdown>

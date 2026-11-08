@@ -950,6 +950,7 @@ export const enLocale: LocalePlugin = {
     "files.failedCount": "{count} failed",
     "directory.pathPlaceholder": "/path/to/project or ~/project",
     "fileViewer.source": "Source",
+    "internalUrl.unavailable": "This internal resource is unavailable or cannot be read in this conversation.",
     "fileViewer.live": "live",
     "fileViewer.static": "static",
     "fileViewer.docxPreview": "docx preview",
