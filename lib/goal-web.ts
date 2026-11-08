@@ -30,6 +30,17 @@ export interface WebGoalInfo {
   goal: WebGoal | null;
 }
 
+/** Completion is explicit in the SDK; a missing goal alone can also mean drop. */
+export function shouldNotifyGoalCompletion(previous: WebGoalInfo | null, next: WebGoalInfo | null): boolean {
+  const before = previous?.goal;
+  const after = next?.goal;
+  if (!before || before.status === "dropped") return false;
+  if (after && after.id !== before.id) return false;
+  return before.status === "complete"
+    ? !after
+    : after?.status === "complete";
+}
+
 /** Ops accepted by the wrapper's `goal` command. */
 export type WebGoalOp = "get" | "create" | "set" | "pause" | "resume" | "drop" | "budget" | "guided";
 

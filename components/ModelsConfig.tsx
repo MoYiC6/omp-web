@@ -1749,7 +1749,7 @@ function AddProviderPicker({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function ModelsConfig({ cwd, onClose, embedded = false, onModelsChanged }: { cwd?: string | null; onClose: () => void; embedded?: boolean; onModelsChanged?: () => void }) {
+export function ModelsConfig({ cwd, onClose, embedded = false, initialProviders = false, onModelsChanged }: { cwd?: string | null; onClose: () => void; embedded?: boolean; initialProviders?: boolean; onModelsChanged?: () => void }) {
   const isMobile = useIsMobile();
   const { t } = useI18n();
   const [config, setConfig] = useState<ModelsJson>({ providers: {} });
@@ -1760,7 +1760,7 @@ export function ModelsConfig({ cwd, onClose, embedded = false, onModelsChanged }
   const [selection, setSelection] = useState<Selection | null>({ type: "roles" });
   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([]);
   const [apiKeyProviders, setApiKeyProviders] = useState<ApiKeyProvider[]>([]);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(initialProviders);
 
   const loadOAuthProviders = useCallback(() => {
     fetch(apiPath("/api/auth/providers"))

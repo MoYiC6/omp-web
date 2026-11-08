@@ -41,6 +41,7 @@ agegr/pi-web  →  ddallabenetta/omp-web  →  n0rthwood/omp-web  →  本仓库
 - **项目文件**：侧边栏文件树，预览源码、Markdown、图片、音频、PDF、DOCX，查看 Git diff，切换 Git worktree。
 - **内部资源链接**：聊天中的 `agent://`、`artifact://`、`local://`、`memory://`、`issue://`、`pr://`、`skill://`、`rule://`、`omp://` 链接与独立行内代码可在右侧标签页只读打开；读取绑定原会话，历史会话无需启动 agent。
 - **网页配置**：管理模型提供方、OAuth 登录与 API Key、`models.yml`、插件和技能。
+- **目标模式**：`/goal` 打开目标编辑或管理弹窗，可设置 token 预算、暂停、恢复和放弃目标；目标完成后显示通知。`/login`、`/logout` 打开提供方认证，`/skills` 打开技能设置。
 - **终端标签页**（可选）：在工作区里开一个真实的 shell。
 - **多语言界面**：简体中文、English。
 - **主题**：直接使用 omp 的明暗主题配色。

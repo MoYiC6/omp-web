@@ -25,7 +25,7 @@ import type {
 } from "@/lib/settings-api";
 import styles from "./SettingsConfig.module.css";
 
-type SettingsSection = "models" | "themes" | "skills" | "plugins" | "mcp" | "users" | "machines" | `settings:${string}`;
+type SettingsSection = "models" | "providers" | "themes" | "skills" | "plugins" | "mcp" | "users" | "machines" | `settings:${string}`;
 
 interface SettingsConfigProps {
   cwd?: string | null;
@@ -203,7 +203,7 @@ export function SettingsConfig({ cwd, sessionId, initialSection = "models", onCl
     });
     return () => { cancelled = true; };
   }, [locale]);
-  const [section, setSection] = useState<SettingsSection>(initialSection);
+  const [section, setSection] = useState<SettingsSection>(initialSection === "providers" ? "models" : initialSection);
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -397,7 +397,7 @@ export function SettingsConfig({ cwd, sessionId, initialSection = "models", onCl
         <main className={styles.content}>
           {visibleCoreSections.length === 0 ? (
             <div className={styles.empty}>{t("settingsUi.noneAvailable")}</div>
-          ) : query.trim() ? renderGenericSettings() : activeSection === "models" ? <ModelsConfig cwd={cwd} embedded onClose={close} onModelsChanged={onModelsChanged} /> : activeSection === "themes" ? renderThemeSection() : activeSection === "skills" && cwd ? <SkillsConfig cwd={cwd} embedded onClose={close} /> : activeSection === "plugins" && cwd ? <PluginsConfig cwd={cwd} sessionId={sessionId} embedded onClose={close} onReloaded={onReloaded} /> : activeSection === "mcp" ? <McpSettings cwd={cwd} sessionId={sessionId} onReloaded={onReloaded} /> : activeSection === "users" ? <WebUsersConfig /> : activeSection === "machines" ? <MachinesConfig /> : renderGenericSettings()}
+          ) : query.trim() ? renderGenericSettings() : activeSection === "models" ? <ModelsConfig cwd={cwd} embedded initialProviders={initialSection === "providers"} onClose={close} onModelsChanged={onModelsChanged} /> : activeSection === "themes" ? renderThemeSection() : activeSection === "skills" && cwd ? <SkillsConfig cwd={cwd} embedded onClose={close} /> : activeSection === "plugins" && cwd ? <PluginsConfig cwd={cwd} sessionId={sessionId} embedded onClose={close} onReloaded={onReloaded} /> : activeSection === "mcp" ? <McpSettings cwd={cwd} sessionId={sessionId} onReloaded={onReloaded} /> : activeSection === "users" ? <WebUsersConfig /> : activeSection === "machines" ? <MachinesConfig /> : renderGenericSettings()}
         </main>
       </div>
     </div>

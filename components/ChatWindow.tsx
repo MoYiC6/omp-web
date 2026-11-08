@@ -24,6 +24,7 @@ import { MarkdownBody } from "./MarkdownBody";
 import { ChatInput, resolveImageMimeType, type ChatInputHandle } from "./ChatInput";
 import { BtwPanel } from "./BtwPanel";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
+import { GoalDialog } from "./GoalDialog";
 import { OmpWordmark } from "./OmpWordmark";
 import { useI18n } from "@/hooks/useI18n";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
@@ -57,8 +58,8 @@ interface Props {
   onSubagentsChange?: (subagents: SubagentSnapshot[]) => void;
   /** `/new` and `/clear`: start a new session in the given project directory. */
   onRequestNewSession?: (cwd: string) => void;
-  /** `/settings` and `/setup`: open the settings modal. */
-  onOpenSettings?: () => void;
+  /** Open settings, optionally selecting provider authentication or skills. */
+  onOpenSettings?: (section?: "models" | "providers" | "skills") => void;
   /** Completion sound state + controls, owned by AppShell so tasks finishing in
    *  a non-active workspace can still ring. */
   soundEnabled?: boolean;
@@ -248,7 +249,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange, handleRoleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
-    handleBuiltinSlashCommand, handleSetPlanMode, handleGoalAction,
+    handleBuiltinSlashCommand, handleSetPlanMode, handleGoalAction, handleCreateGoal, goalDialogOpen, closeGoalDialog,
     handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, uploadSessionFiles,
   } = useAgentSession({
     session, newSessionCwd, onAgentEnd: wrappedOnAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSessionRenamed,
@@ -398,6 +399,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
     : null;
 
   const chatInputElement = (
+    <>
     <ChatInput
       ref={chatInputRef}
       onSend={handleSend}
@@ -447,6 +449,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
       cwd={session?.cwd ?? newSessionCwd}
       onUploadFiles={uploadSessionFiles}
     />
+      {goalDialogOpen && <GoalDialog info={goal} busy={sessionBusy} onClose={closeGoalDialog} onCreate={handleCreateGoal} onAction={handleGoalAction} />}
+    </>
   );
 
   const aboveEditorWidgets = extensionWidgets.filter((widget) => widget.placement !== "belowEditor");

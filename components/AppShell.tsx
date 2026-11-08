@@ -137,7 +137,7 @@ function AppShellBody({ initialTarget, initialSession, resolutionRevision }: App
   const [explorerRefreshDone, setExplorerRefreshDone] = useState(false);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [settingsConfigOpen, setSettingsConfigOpen] = useState(false);
-  const [settingsInitialSection, setSettingsInitialSection] = useState<"models" | "machines">("models");
+  const [settingsInitialSection, setSettingsInitialSection] = useState<"models" | "providers" | "skills" | "machines">("models");
   const [projectTrust, setProjectTrust] = useState<ProjectTrustStatus | null>(null);
   const [projectTrustDialogOpen, setProjectTrustDialogOpen] = useState(false);
   const [projectTrustBusy, setProjectTrustBusy] = useState(false);
@@ -2090,7 +2090,7 @@ function AppShellBody({ initialTarget, initialSession, resolutionRevision }: App
               onOpenFile={handleOpenLinkedFile}
               onOpenInternalUrl={handleOpenInternalUrl}
               onRequestNewSession={(cwd) => handleNewSession(`cmd-${Date.now()}`, cwd)}
-              onOpenSettings={() => { setSettingsInitialSection("models"); setSettingsConfigOpen(true); }}
+              onOpenSettings={(section = "models") => { setSettingsInitialSection(section); setSettingsConfigOpen(true); }}
               soundEnabled={soundEnabled}
               onSoundToggle={onSoundToggle}
               playDoneSound={playDoneSound}

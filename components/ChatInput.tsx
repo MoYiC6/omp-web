@@ -3201,7 +3201,7 @@ function goalObjectiveSummary(objective: string): string {
 }
 
 /** Goal mode status and controls (the TUI's goal footer and `/goal` menu). */
-function GoalStatusBar({
+export function GoalStatusBar({
   info,
   onAction,
   t,
@@ -3213,7 +3213,7 @@ function GoalStatusBar({
   const goal = info.goal;
   if (!goal) return null;
   const active = info.enabled && goal.status === "active";
-  const statusLabel = info.enabled ? t(GOAL_STATUS_KEYS[goal.status]) : t("chat.goalStatusPaused");
+  const statusLabel = info.enabled || goal.status === "complete" ? t(GOAL_STATUS_KEYS[goal.status]) : t("chat.goalStatusPaused");
   const tokens = goal.tokenBudget !== undefined
     ? `${goal.tokensUsed.toLocaleString()} / ${goal.tokenBudget.toLocaleString()}`
     : goal.tokensUsed.toLocaleString();

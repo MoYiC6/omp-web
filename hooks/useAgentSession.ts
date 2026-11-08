@@ -12,7 +12,8 @@ import type {
   SessionTreeNode,
   SubagentSnapshot,
 } from "@/lib/types";
-import { isBlockingExtensionUiRequest } from "@/lib/browser-notifications";
+import { isBlockingExtensionUiRequest, shouldShowBrowserNotification, showBrowserNotification } from "@/lib/browser-notifications";
+import { useI18n } from "@/hooks/useI18n";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { stripAnsi } from "@/lib/ansi";
 import { apiPath } from "@/lib/api-path";
@@ -22,8 +23,8 @@ import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { ContextUsage, SessionStatsInfo, SlashCommandInfo } from "@/lib/omp-types";
 import type { ModelRoleAssignment } from "@/lib/api-types";
 import { planModeTransitionErrorMessage, planSlashCommandIntent, planSlashCommandOutcome, type WebPlanModeInfo } from "@/lib/plan-mode-web";
-import { formatGoalDetails, parseGoalSlashCommand, webGoalInfo, type WebGoalInfo, type WebGoalOp } from "@/lib/goal-web";
 import { appendBtwDelta, latestBtwTurn, mergeBtwRecords, type BtwRecord } from "@/lib/btw-web";
+import { formatGoalDetails, parseGoalSlashCommand, shouldNotifyGoalCompletion, webGoalInfo, type WebGoalInfo, type WebGoalOp } from "@/lib/goal-web";
 
 export interface SessionData {
   sessionId: string;
@@ -213,8 +214,8 @@ export interface UseAgentSessionOptions {
   onSessionStatsPanelOpen?: () => void;
   /** `/new` and `/clear`: start a new session in this session's project. */
   onRequestNewSession?: () => void;
-  /** `/settings` and `/setup`: open the settings modal. */
-  onOpenSettings?: () => void;
+  /** Open settings, optionally selecting provider authentication or skills. */
+  onOpenSettings?: (section?: "models" | "providers" | "skills") => void;
   setToolPreset?: (preset: "none" | "default" | "full") => void;
 }
 
@@ -421,6 +422,7 @@ type SlashCommandsResponse = {
 };
 
 export function useAgentSession(opts: UseAgentSessionOptions) {
+  const { t } = useI18n();
   const {
     session, newSessionCwd, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSessionRenamed,
     modelsRefreshKey, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
@@ -476,6 +478,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [btwRecords, setBtwRecords] = useState<BtwRecord[]>([]);
   const [btwVisible, setBtwVisible] = useState(false);
   const btwRunningRef = useRef(false);
+  const [goalDialogOpen, setGoalDialogOpen] = useState(false);
+  const completedGoalRef = useRef<WebGoalInfo | null>(null);
+  const notifiedGoalIdRef = useRef<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const eventSourceSessionIdRef = useRef<string | null>(null);
   const eventConnectionAttemptRef = useRef<EventStreamConnectionAttempt | null>(null);
@@ -923,6 +928,25 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       },
     });
   }, []);
+
+  const refreshGoalAfterTurn = useCallback((next: WebGoalInfo | null) => {
+    const completed = completedGoalRef.current;
+    if (completed?.goal && completed.goal.id !== notifiedGoalIdRef.current
+      && (shouldNotifyGoalCompletion(completed, next) || (next?.goal?.id === completed.goal.id && next.goal.status === "complete"))) {
+      notifiedGoalIdRef.current = completed.goal.id;
+      addNotice({ type: "success", message: t("chat.goalCompleted", { objective: completed.goal.objective }) });
+      // The normal turn settlement already invokes ChatWindow's completion sound.
+      if (typeof Notification !== "undefined" && Notification.permission === "granted" && shouldShowBrowserNotification()) {
+        void showBrowserNotification({
+          title: t("chat.goalStatusComplete"), body: completed.goal.objective,
+          sessionUrl: window.location.href, tag: `goal-${completed.goal.id}`,
+          onClick: () => window.focus(),
+        });
+      }
+      completedGoalRef.current = null;
+    }
+    setGoal(next);
+  }, [addNotice, t]);
   const appendCommandOutput = useCallback((text: string) => {
     const content = stripAnsi(text).trim();
     const message: CustomMessage = {
@@ -1338,7 +1362,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               if (d.state?.extensionWidgets !== undefined) setExtensionWidgets(d.state.extensionWidgets ?? []);
               if (d.state?.subagents !== undefined) setSubagents((current) => mergeSubagentSnapshots(current, d.state?.subagents ?? []));
               if (d.state?.planMode !== undefined) setPlanMode(d.state.planMode ?? null);
-              if (d.state?.goal !== undefined) setGoal(d.state.goal ?? null);
+              if (d.state?.goal !== undefined) refreshGoalAfterTurn(d.state.goal ?? null);
               // Aborted turns can leave messages queued in pi (delivered with the
               // next turn); dead wrapper (no state) means the queue is gone.
               setQueuedMessages(normalizeQueuedMessages(d.state?.queuedMessages));
@@ -1413,7 +1437,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // tool. Completion clears the goal at the turn's end, which the
         // agent_end state refresh picks up (no event is emitted for it).
         const state = event.state as { enabled: boolean; goal: unknown } | undefined;
-        setGoal((prev) => webGoalInfo(state, prev?.available ?? true));
+        const info = webGoalInfo(state, true);
+        // Completion is emitted before the controller clears the goal at turn end;
+        // drops emit a distinct dropped state. Keep that evidence across reloads.
+        completedGoalRef.current = info.goal?.status === "complete" ? info : null;
+        setGoal(info);
         break;
       }
       case "session_renamed": {
@@ -1616,7 +1644,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         handleExtensionUiRequest(event as ExtensionUiRequest);
         break;
     }
-  }, [addNotice, cancelEventStreamGrace, confirmPrompt, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, onSessionRenamed, refreshContextUsage, restoreRejectedPrompt, scheduleEventStreamClose, settleUiStage]);
+  }, [addNotice, cancelEventStreamGrace, confirmPrompt, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, onSessionRenamed, refreshContextUsage, refreshGoalAfterTurn, restoreRejectedPrompt, scheduleEventStreamClose, settleUiStage]);
   handleAgentEventRef.current = handleAgentEvent;
 
   // A send path that failed before the server accepted the submission must
@@ -2089,12 +2117,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       appendCommandOutput(formatGoalDetails(await runGoalCommand(sid, { op: "get" })));
       return null;
     }
-    if (action.op === "drop" && !window.confirm("Drop goal?\n\nThis removes the goal record. Accumulated usage stays in the session log.")) {
+    if (action.op === "drop" && !window.confirm(t("chat.goalDropConfirm"))) {
       return null;
     }
     await runGoalCommand(sid, action);
     return goalActionMessage(action);
-  }, [appendCommandOutput, runGoalCommand]);
+  }, [appendCommandOutput, runGoalCommand, t]);
 
   const handleGoalAction = useCallback(async (action: GoalAction) => {
     const sid = sessionIdRef.current;
@@ -2106,6 +2134,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
     }
   }, [addNotice, performGoalAction]);
+
+  const handleCreateGoal = useCallback(async (objective: string, tokenBudget?: number) => {
+    const sid = sessionIdRef.current ?? await ensureNewSession();
+    if (!sid) throw new Error("No active session");
+    await runGoalCommand(sid, { op: "create", objective, tokenBudget });
+    setGoalDialogOpen(false);
+    await handleSend(objective);
+  }, [ensureNewSession, handleSend, runGoalCommand]);
 
   const handleBuiltinSlashCommand = useCallback(async (text: string): Promise<BuiltinSlashCommandResult> => {
     if (!text.startsWith("/")) return { handled: false };
@@ -2212,11 +2248,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             case "invalid":
               return complete({ handled: true, error: request.error });
             case "menu": {
-              const info = await runGoalCommand(sid, { op: "get" });
-              if (!info.goal) {
-                return complete({ handled: true, error: "Usage: /goal <objective>, or /guided-goal to draft one with the agent." });
-              }
-              appendCommandOutput(formatGoalDetails(info));
+              await runGoalCommand(sid, { op: "get" });
+              setGoalDialogOpen(true);
               return { handled: true };
             }
             case "create":
@@ -2266,6 +2299,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               case "setup":
                 if (!onOpenSettings) break;
                 onOpenSettings();
+                return complete({ handled: true, action: "openSettings" });
+              case "login":
+              case "logout":
+              case "skills":
+                if (!onOpenSettings) break;
+                onOpenSettings(result.command === "skills" ? "skills" : "providers");
                 return complete({ handled: true, action: "openSettings" });
             }
             return complete({
@@ -2613,7 +2652,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange, handleRoleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
-    handleBuiltinSlashCommand, handleSetPlanMode, handleGoalAction,
+    handleBuiltinSlashCommand, handleSetPlanMode, handleGoalAction, handleCreateGoal,
+    goalDialogOpen, closeGoalDialog: () => setGoalDialogOpen(false),
     handleToolPresetChange, handleThinkingLevelChange, loadTools, loadSlashCommands, setActiveLeafId, setData, setMessages,
     uploadSessionFiles,
     dispatch, setAgentRunning, setForkingEntryId,

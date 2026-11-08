@@ -1058,7 +1058,7 @@ export class AgentSessionWrapper {
               this.inner.setGoalModeState(await this.inner.goalRuntime.replaceGoal({ objective }));
               if (this.inner.isStreaming) await this.inner.sendGoalModeContext({ deliverAs: "steer" });
             } else {
-              await this.goal.handle({ op: "create", objective });
+              await this.goal.handle({ op: "create", objective, ...(command.tokenBudget !== undefined ? { token_budget: command.tokenBudget as number } : {}) });
             }
             // As in the TUI, the browser submits the objective as the user's
             // prompt next. Void the continuation `create` scheduled so it cannot
