@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { PwaRegistration } from "@/components/PwaRegistration";
 import { VersionRefreshBanner } from "@/components/VersionRefreshBanner";
+import { I18nProvider } from "@/hooks/useI18n";
 import "katex/dist/katex.min.css";
 import "./globals.css";
 
@@ -64,9 +65,11 @@ export default function RootLayout({
         />
       </head>
       <body translate="no" className="notranslate">
-        {children}
-        <PwaRegistration />
-        <VersionRefreshBanner />
+        <I18nProvider>
+          {children}
+          <PwaRegistration />
+          <VersionRefreshBanner />
+        </I18nProvider>
       </body>
     </html>
   );
