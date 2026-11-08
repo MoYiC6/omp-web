@@ -2076,6 +2076,8 @@ function AppShellBody({ initialTarget, initialSession, resolutionRevision }: App
               onContextUsageChange={handleContextUsageChange}
               onSubagentsChange={setSubagents}
               onOpenFile={handleOpenLinkedFile}
+              onRequestNewSession={(cwd) => handleNewSession(`cmd-${Date.now()}`, cwd)}
+              onOpenSettings={() => { setSettingsInitialSection("models"); setSettingsConfigOpen(true); }}
               soundEnabled={soundEnabled}
               onSoundToggle={onSoundToggle}
               playDoneSound={playDoneSound}

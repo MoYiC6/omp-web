@@ -422,7 +422,6 @@ test("every send path hands its draft key to the session and keeps local command
   assert.match(sendSource, /\} else \{\s*clearInput\(\);\s*\}/);
   assert.match(queuedSource, /onPromptWithStreamingBehavior\(msg, streamingBehavior, undefined, submitInput\(msg\)\);/);
   assert.match(queuedSource, /queue\(msg, undefined, submitInput\(msg\)\);/);
-  assert.doesNotMatch(queuedSource, /clearInput/);
 });
 
 test("a failed send is restored through the store so its pending marker is released (#88)", () => {

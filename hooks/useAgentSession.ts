@@ -156,7 +156,21 @@ export interface CompactResultInfo {
 
 export type BuiltinSlashCommandResult =
   | { handled: false }
-  | { handled: true; message?: string; error?: string; prompt?: string; action?: "openSessionStats" };
+  | { handled: true; message?: string; error?: string; prompt?: string; action?: "openSessionStats" | "openSettings" };
+
+/**
+ * Builtins the SDK ships with only a TUI handler and omp-web has no equivalent
+ * for: say where the browser offers the same thing instead of sending the
+ * command text to the model.
+ */
+const TUI_ONLY_COMMAND_HINTS: Record<string, string> = {
+  resume: "/resume is terminal-only: open the session from the sidebar instead.",
+  delete: "/delete is terminal-only: delete the session from the sidebar instead.",
+  tree: "/tree is terminal-only: use the branch navigator instead.",
+  branch: "/branch is terminal-only: use the branch navigator instead.",
+  fork: "/fork is terminal-only: use the Fork button on a user message instead.",
+  "plan-review": "/plan-review is terminal-only: the plan review opens when the agent proposes a plan.",
+};
 
 export interface UseAgentSessionOptions {
   session: SessionInfo | null;
@@ -172,6 +186,10 @@ export interface UseAgentSessionOptions {
   onBranchDataChange?: (tree: SessionTreeNode[], activeLeafId: string | null, onLeafChange: (leafId: string | null) => void) => void;
   onSystemPromptChange?: (prompt: string | null) => void;
   onSessionStatsPanelOpen?: () => void;
+  /** `/new` and `/clear`: start a new session in this session's project. */
+  onRequestNewSession?: () => void;
+  /** `/settings` and `/setup`: open the settings modal. */
+  onOpenSettings?: () => void;
   setToolPreset?: (preset: "none" | "default" | "full") => void;
 }
 
@@ -381,6 +399,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const {
     session, newSessionCwd, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSessionRenamed,
     modelsRefreshKey, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
+    onRequestNewSession, onOpenSettings,
   } = opts;
 
   const isNew = session === null && newSessionCwd !== null;
@@ -1971,7 +1990,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (!result.handled) return result;
       if (result.error) {
         addNotice({ type: "error", message: result.error });
-      } else if (result.action !== "openSessionStats") {
+      } else if (!result.action) {
         addNotice({ type: "success", message: result.message ?? "Command completed" });
       }
       return result;
@@ -2050,10 +2069,32 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             handled: boolean;
             output?: string[];
             prompt?: string;
+            tuiOnly?: boolean;
+            command?: string;
           }>(sid, {
             type: "execute_slash_command",
             message: text,
           });
+          if (!result?.handled && result?.tuiOnly && result.command) {
+            // A TUI-only builtin: use the web equivalent, or refuse it rather
+            // than sending the command text to the model as a prompt.
+            switch (result.command) {
+              case "new":
+              case "clear":
+                if (!onRequestNewSession) break;
+                onRequestNewSession();
+                return complete({ handled: true, message: "Started a new session" });
+              case "settings":
+              case "setup":
+                if (!onOpenSettings) break;
+                onOpenSettings();
+                return complete({ handled: true, action: "openSettings" });
+            }
+            return complete({
+              handled: true,
+              error: TUI_ONLY_COMMAND_HINTS[result.command] ?? `/${result.command} is only available in the omp terminal UI.`,
+            });
+          }
           if (!result?.handled) return { handled: false };
           const output = result.output?.filter((line) => line.trim()).join("\n\n") ?? "";
           if (output) appendCommandOutput(output);
@@ -2067,7 +2108,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       if (commandName === "compact") setIsCompacting(false);
     }
-  }, [addNotice, appendCommandOutput, ensureNewSession, handleSetPlanMode, isCompacting, loadModels, loadSession, loadSlashCommands, loadTools, planMode, promoteNewSession, onSessionStatsPanelOpen]);
+  }, [addNotice, appendCommandOutput, ensureNewSession, handleSetPlanMode, isCompacting, loadModels, loadSession, loadSlashCommands, loadTools, planMode, promoteNewSession, onSessionStatsPanelOpen, onRequestNewSession, onOpenSettings]);
 
   // Queued (undelivered) messages live in the queue panel only; the chat gets
   // the real user message when pi delivers it (user message_end event). An

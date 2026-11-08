@@ -9,7 +9,7 @@ import {
   Theme,
 } from "@oh-my-pi/pi-coding-agent";
 import { buildAvailableSlashCommands } from "@oh-my-pi/pi-coding-agent/slash-commands/available-commands";
-import { BUILTIN_SLASH_COMMAND_DEFS } from "@oh-my-pi/pi-coding-agent/slash-commands/builtin-registry";
+import { BUILTIN_SLASH_COMMAND_DEFS, lookupBuiltinSlashCommand } from "@oh-my-pi/pi-coding-agent/slash-commands/builtin-registry";
 import { executeAcpBuiltinSlashCommand, type AcpBuiltinSlashCommandResult } from "@oh-my-pi/pi-coding-agent/slash-commands/acp-builtins";
 import { discoverCustomToolPaths } from "@oh-my-pi/pi-coding-agent/extensibility/custom-tools";
 import { AsyncJobManager } from "@oh-my-pi/pi-coding-agent/async";
@@ -970,7 +970,15 @@ export class AgentSessionWrapper {
             invalidateModelsCache();
           },
         });
-        if (result === false) return { handled: false, output };
+        if (result === false) {
+          // The ACP dispatcher skips builtins that ship only a TUI handler.
+          // Report them so the browser maps them to a web equivalent or
+          // refuses them, instead of sending the text to the model.
+          const name = /^\/(\S+)/.exec(command.message as string)?.[1] ?? "";
+          const spec = lookupBuiltinSlashCommand(name);
+          if (spec && !spec.handle) return { handled: false, output, tuiOnly: true, command: spec.name };
+          return { handled: false, output };
+        }
         return {
           handled: true,
           output,

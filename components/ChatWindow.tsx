@@ -53,6 +53,10 @@ interface Props {
   onContextUsageChange?: (usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => void;
   onOpenFile?: (filePath: string) => void;
   onSubagentsChange?: (subagents: SubagentSnapshot[]) => void;
+  /** `/new` and `/clear`: start a new session in the given project directory. */
+  onRequestNewSession?: (cwd: string) => void;
+  /** `/settings` and `/setup`: open the settings modal. */
+  onOpenSettings?: () => void;
   /** Completion sound state + controls, owned by AppShell so tasks finishing in
    *  a non-active workspace can still ring. */
   soundEnabled?: boolean;
@@ -197,7 +201,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = fa
   );
 }
 
-export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSessionRenamed, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onSubagentsChange, onOpenFile, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
+export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSessionRenamed, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onSubagentsChange, onOpenFile, onRequestNewSession, onOpenSettings, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
   const { t } = useI18n();
 
   // Wrap onAgentEnd to play the completion sound. This is more reliable than
@@ -221,6 +225,12 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
     chatInputRef?.current?.replaceMessage(message);
   }, [chatInputRef]);
 
+  const sessionCwd = session?.cwd ?? newSessionCwd;
+  const requestNewSession = useMemo(
+    () => (onRequestNewSession && sessionCwd ? () => onRequestNewSession(sessionCwd) : undefined),
+    [onRequestNewSession, sessionCwd],
+  );
+
   const {
     loading, error, messages, entryIds, streamState,
     agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, modelRoles, toolPreset, thinkingLevel,
@@ -240,6 +250,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
   } = useAgentSession({
     session, newSessionCwd, onAgentEnd: wrappedOnAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSessionRenamed,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
+    onRequestNewSession: requestNewSession, onOpenSettings,
   });
   const sessionBusy = agentRunning || bashRunning;
 

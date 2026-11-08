@@ -1287,6 +1287,21 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (images.length) return;
     onAudioUnlock?.();
     const streamingBehavior = mode === "steer" ? "steer" : "followUp";
+    // Builtins (and TUI-only ones refused or mapped to the web) are handled
+    // here as when idle, instead of reaching the model as queued text.
+    if (msg.startsWith("/") && onBuiltinCommand) {
+      const result = await onBuiltinCommand(msg);
+      if (result.handled) {
+        if (!result.error) {
+          if (result.prompt && onPromptWithStreamingBehavior) {
+            onPromptWithStreamingBehavior(result.prompt, streamingBehavior, undefined, submitInput(result.prompt));
+          } else {
+            clearInput();
+          }
+        }
+        return;
+      }
+    }
     if (msg.startsWith("/") && onPromptWithStreamingBehavior) {
       onPromptWithStreamingBehavior(msg, streamingBehavior, undefined, submitInput(msg));
       return;
@@ -1295,7 +1310,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     // Nothing would receive the text: leave it in the composer instead of eating it.
     if (!queue) return;
     queue(msg, undefined, submitInput(msg));
-  }, [value, onPromptWithStreamingBehavior, onSteer, onFollowUp, submitInput, onAudioUnlock, waitForPendingImages]);
+  }, [value, onBuiltinCommand, onPromptWithStreamingBehavior, onSteer, onFollowUp, submitInput, clearInput, onAudioUnlock, waitForPendingImages]);
 
   const getNextSlashIndex = useCallback((direction: "up" | "down" | "left" | "right") => {
     const lastIndex = displayedSlashCommands.length - 1;
